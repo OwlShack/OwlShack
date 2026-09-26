@@ -37,6 +37,11 @@ const ContactDetailPage = lazy(() =>
     default: m.ContactDetailPage,
   })),
 );
+const CompanionTelemetryPage = lazy(() =>
+  import("@/pages/CompanionTelemetryPage").then((m) => ({
+    default: m.CompanionTelemetryPage,
+  })),
+);
 const ChannelsPage = lazy(() =>
   import("@/pages/ChannelsPage").then((m) => ({ default: m.ChannelsPage })),
 );
@@ -71,6 +76,9 @@ const RadioPage = lazy(() =>
 );
 const RadioHealthPage = lazy(() =>
   import("@/pages/RadioHealthPage").then((m) => ({ default: m.RadioHealthPage })),
+);
+const SensorsPage = lazy(() =>
+  import("@/pages/SensorsPage").then((m) => ({ default: m.SensorsPage })),
 );
 const DiscoverPage = lazy(() =>
   import("@/pages/DiscoverPage").then((m) => ({ default: m.DiscoverPage })),
@@ -135,6 +143,7 @@ export function App() {
           <Route path="/bots" element={<BotsPage />} />
           <Route path="/mqtt" element={<MqttPage />} />
           <Route path="/radio" element={<RadioHealthPage />} />
+          <Route path="/sensors" element={<SensorsPage />} />
           <Route path="/discover" element={<DiscoverPage />} />
           <Route path="/settings" element={<RadioPage />} />
           <Route path="/repeater" element={<RepeaterNodePage />} />
@@ -147,6 +156,10 @@ export function App() {
           <Route
             path="/companions/:ref/contacts/:pubkey"
             element={<ContactDetailPage />}
+          />
+          <Route
+            path="/companions/:ref/telemetry"
+            element={<CompanionTelemetryPage />}
           />
           <Route
             path="/companions/:ref/channels"

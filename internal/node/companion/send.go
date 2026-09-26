@@ -14,9 +14,9 @@ import (
 	"github.com/meshcore-go/OwlShack/internal/store"
 )
 
-// maxDMTextBytes is the firmware's MAX_TEXT_LEN (10 * CIPHER_BLOCK_SIZE), less the 2 bytes a
+// MaxDMTextBytes is the firmware's MAX_TEXT_LEN (10 * CIPHER_BLOCK_SIZE), less the 2 bytes a
 // retry past attempt 3 appends, so a message that sends can also be retried.
-const maxDMTextBytes = 10*16 - 2
+const MaxDMTextBytes = 10*16 - 2
 
 // uniqueTimestamp mirrors the firmware's getCurrentTimeUnique(): a remote node drops a second post sharing a timestamp as a retry.
 func (c *Companion) uniqueTimestamp() uint32 { return c.repeaters.UniqueTimestamp() }
@@ -135,8 +135,8 @@ func (c *Companion) sendDM(pubkeyHex, text string, fallbackHashSize uint8, ackTi
 	}
 
 	// The UI counts characters; the wire counts bytes, and a retry past attempt 3 appends 2 more.
-	if len(text) > maxDMTextBytes {
-		return fmt.Errorf("message is %d bytes, over the %d-byte limit (multibyte characters cost more than one)", len(text), maxDMTextBytes)
+	if len(text) > MaxDMTextBytes {
+		return fmt.Errorf("message is %d bytes, over the %d-byte limit (multibyte characters cost more than one)", len(text), MaxDMTextBytes)
 	}
 
 	// SendTextMessage treats a nil path as a flood, so an unrouted contact still sends.

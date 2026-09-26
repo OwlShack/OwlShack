@@ -23,6 +23,9 @@ type ContactMetadata struct {
 	MonitorRetrySecs int64 `json:"monitorRetrySecs,omitempty"`
 	// MonitorMaxRetries bounds consecutive retries before the node falls back to its normal interval; 0 = the poller's built-in default.
 	MonitorMaxRetries int `json:"monitorMaxRetries,omitempty"`
+
+	// TelemPerms is which classes this contact may read (sensor.Perm* bits), read only where the mode is "selected".
+	TelemPerms uint8 `json:"telemPerms,omitempty"`
 }
 
 type Contact struct {

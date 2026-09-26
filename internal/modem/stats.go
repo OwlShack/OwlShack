@@ -85,8 +85,8 @@ type kissStatsProvider struct {
 	startTime time.Time
 	log       *slog.Logger
 
-	// lastReply is UnixNano of the modem's last answer to a hardware query; 0 means it has never
-	// answered one, which is how the liveness probe tells "unsupported" from "stopped talking".
+	// lastReply is UnixNano of the modem's last answer to a hardware query, an error reply included
+	// (the firmware answers a command it lacks with HW_ERR_UNKNOWN_CMD); 0 means it has never answered.
 	lastReply atomic.Int64
 
 	mu          sync.Mutex
@@ -101,6 +101,9 @@ type kissStatsProvider struct {
 // staleReadingAfter is how long a board reading survives without the modem answering. Longer than
 // one probe interval so a single dropped reply does not flap the value in and out of the payload.
 const staleReadingAfter = 45 * time.Second
+
+// ConnectedAt is when this link was set up, the start of a silence for a board that has never answered.
+func (p *kissStatsProvider) ConnectedAt() time.Time { return p.startTime }
 
 // LastReply reports when the modem last answered a hardware query; the zero time means never.
 func (p *kissStatsProvider) LastReply() time.Time {
@@ -119,6 +122,9 @@ func NewKissStatsProvider(modem *hardware.KissModem, radio RadioInfo) *kissStats
 		log:       slog.Default().With("component", "stats", "type", "kiss"),
 	}
 
+	answered := func(byte, []byte) { p.lastReply.Store(time.Now().UnixNano()) }
+	modem.OnHwResponse(hardware.HW_RESP_ERROR, answered)
+	modem.OnHwResponse(hardware.HwResp(hardware.HW_CMD_GET_STATS), answered)
 	modem.OnHwResponse(hardware.HwResp(hardware.HW_CMD_GET_NOISE_FLOOR), p.onNoiseFloor)
 	modem.OnHwResponse(hardware.HwResp(hardware.HW_CMD_GET_BATTERY), p.onBattery)
 	modem.OnHwResponse(hardware.HwResp(hardware.HW_CMD_GET_MCU_TEMP), p.onMCUTemp)

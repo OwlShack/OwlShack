@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Antenna,
-  Activity,
   AudioLines,
   Bot,
   Download,
@@ -16,11 +15,13 @@ import {
   Rss,
   Settings,
   Sun,
+  Thermometer,
   Users,
   Waves,
   Waypoints,
 } from "lucide-react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
+import { SystemStatus } from "@/components/SystemStatus";
 import {
   Sidebar,
   SidebarContent,
@@ -113,6 +114,12 @@ const TELEMETRY: NavItem[] = [
     label: "Discover",
     icon: Radar,
     match: (p) => p === "/discover",
+  },
+  {
+    to: "/sensors",
+    label: "Sensors",
+    icon: Thermometer,
+    match: (p) => p === "/sensors",
   },
 ];
 
@@ -427,13 +434,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </SidebarContent>
 
         <SidebarFooter className="border-t border-sidebar-border px-2 py-2 gap-1 group-data-[collapsible=icon]:hidden">
-          <div className="px-2 py-1 flex items-center justify-between font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground/70">
-            <span>system</span>
-            <span className="inline-flex items-center gap-1.5">
-              <Activity className="size-2.5 text-success" />
-              <span className="text-success">nominal</span>
-            </span>
-          </div>
+          <SystemStatus />
           <InstallButton />
           <ThemeToggle />
         </SidebarFooter>

@@ -27,6 +27,7 @@ import (
 	"github.com/meshcore-go/OwlShack/internal/node/repeater"
 	"github.com/meshcore-go/OwlShack/internal/signaltest"
 	"github.com/meshcore-go/OwlShack/internal/store"
+	"github.com/meshcore-go/OwlShack/internal/trigger"
 	"github.com/meshcore-go/OwlShack/web"
 	meshcore "github.com/meshcore-go/meshcore-go"
 	"github.com/meshcore-go/meshcore-go/node"
@@ -146,6 +147,20 @@ func Run(ctx context.Context, importPath string, verbosity int) error {
 		}
 	}()
 
+	// Sensors are local hardware, so the hub outlives a radio reconnect; a failed load is fatal, or the page reads as nothing configured.
+	sensorHub, err := startSensors(ctx, db, srv.Hub(), slog.Default())
+	if err != nil {
+		return err
+	}
+	defer sensorHub.Close()
+
+	// Loaded once here and refreshed on save, so a telemetry reply never waits on the database.
+	telemetry := newTelemetryPublisher(sensorHub)
+	feedPreview := trigger.NewFeedPreview()
+	if err := telemetry.Load(ctx, db); err != nil {
+		return err
+	}
+
 	echoTracker := echo.NewTracker(db, srv.Hub(), slog.Default())
 	go echoTracker.PruneLoop(ctx)
 	go packetPruneLoop(ctx, db)
@@ -198,16 +213,16 @@ func Run(ctx context.Context, importPath string, verbosity int) error {
 		if err != nil {
 			return err
 		}
-		newComps, err := startCompanions(ctx, c, newMs, newMux, db, srv.Hub(), echoTracker)
+		newComps, err := startCompanions(ctx, c, newMs, newMux, db, srv.Hub(), echoTracker, telemetry)
 		if err != nil {
 			newMs.Close()
-			return fmt.Errorf("companion startup: %w", err)
+			return fmt.Errorf("%w: %w", errCompanionStart, err)
 		}
-		newRep, err := startRepeater(ctx, c, newMux, db, srv.Hub(), newMs.Stats, reload)
+		newRep, err := startRepeater(ctx, c, newMux, db, srv.Hub(), newMs.Stats, reload, telemetry)
 		if err != nil {
 			stopCompanions(newComps)
 			newMs.Close()
-			return fmt.Errorf("repeater startup: %w", err)
+			return fmt.Errorf("%w: %w", errRepeaterStart, err)
 		}
 		ms, mux, companions, rep = newMs, newMux, newComps, newRep
 		compReg.set(companions)
@@ -215,11 +230,21 @@ func Run(ctx context.Context, importPath string, verbosity int) error {
 		return nil
 	}
 
+	// installBackend hands the server a backend over whatever radio generation is running now.
+	installBackend := func() {
+		srv.SetBackend(&backend{
+			companions: companions, repeater: rep, db: db, stats: statsOf(ms), mux: mux,
+			reload: reload, resetModem: resetModem, discover: disc, sensors: sensorHub, telemetry: telemetry,
+			feedPreview: feedPreview,
+		})
+	}
+
 	// stopRadio tears the stack down and leaves the vars nil, which is the state startRadio recovers from.
 	stopRadio := func() {
 		stopCompanions(companions)
 		stopRepeater(rep)
 		if ms != nil {
+			radioSeen.keepReply(ms.Stats)
 			ms.Close()
 		}
 		ms, mux, companions, rep, disc = nil, nil, nil, nil, nil
@@ -231,6 +256,7 @@ func Run(ctx context.Context, importPath string, verbosity int) error {
 	var retryTimer <-chan time.Time
 	retryDelay := initialRetryDelay
 	radioUp := func(err error) {
+		radioSeen.started(err)
 		if err == nil {
 			retryTimer, retryDelay = nil, initialRetryDelay
 			return
@@ -245,7 +271,7 @@ func Run(ctx context.Context, importPath string, verbosity int) error {
 			"error", err, "addr", listenAddr)
 		radioUp(err)
 	}
-	srv.SetBackend(newBackend(companions, rep, db, statsOf(ms), mux, reload, resetModem, disc))
+	installBackend()
 
 	for {
 		select {
@@ -275,6 +301,11 @@ func Run(ctx context.Context, importPath string, verbosity int) error {
 			}
 			logging.Configure(verbosity, newLogLevel)
 
+			// Refreshed on every config reload, or a deleted companion leaves its channels listed.
+			if err := telemetry.Load(ctx, db); err != nil {
+				slog.Error("reloading the telemetry map", "error", err)
+			}
+
 			var stats reloadStats
 			// A reload with no radio always retries it: the save that just landed is how an operator
 			// corrects a connection the node could not open, and this is the only path back.
@@ -289,12 +320,12 @@ func Run(ctx context.Context, importPath string, verbosity int) error {
 				radioUp(startRadio(newCfg))
 				stats.started = len(companions)
 			} else {
-				companions, stats, err = reloadCompanions(ctx, cfg, newCfg, companions, ms, mux, db, srv.Hub(), echoTracker)
+				companions, stats, err = reloadCompanions(ctx, cfg, newCfg, companions, ms, mux, db, srv.Hub(), echoTracker, telemetry)
 				if err != nil {
 					ms.Close()
 					return fmt.Errorf("companion restart after reload: %w", err)
 				}
-				rep, err = reloadRepeater(ctx, cfg, newCfg, rep, mux, db, srv.Hub(), ms.Stats, reload)
+				rep, err = reloadRepeater(ctx, cfg, newCfg, rep, mux, db, srv.Hub(), ms.Stats, reload, telemetry)
 				if err != nil {
 					ms.Close()
 					return fmt.Errorf("repeater restart after reload: %w", err)
@@ -303,7 +334,7 @@ func Run(ctx context.Context, importPath string, verbosity int) error {
 			cfg = newCfg
 			compReg.set(companions)
 			disc = newDiscovery()
-			srv.SetBackend(newBackend(companions, rep, db, statsOf(ms), mux, reload, resetModem, disc))
+			installBackend()
 			slog.Info("config reloaded", "started", stats.started, "stopped", stats.stopped, "kept", stats.kept, "reloaded", stats.reloaded)
 
 		// One arm for both: the dead-radio watcher (and the UI's reset button) signal reconnectCh, and
@@ -320,14 +351,14 @@ func Run(ctx context.Context, importPath string, verbosity int) error {
 			} else {
 				radioUp(err)
 			}
-			srv.SetBackend(newBackend(companions, rep, db, statsOf(ms), mux, reload, resetModem, disc))
+			installBackend()
 
 		case <-retryTimer:
 			retryTimer = nil
 			if err := startRadio(cfg); err == nil {
 				slog.Info("modem connected")
 				radioUp(nil)
-				srv.SetBackend(newBackend(companions, rep, db, statsOf(ms), mux, reload, resetModem, disc))
+				installBackend()
 			} else {
 				radioUp(err)
 			}
@@ -344,8 +375,8 @@ func statsOf(ms *modem.State) modem.StatsProvider {
 	return ms.Stats
 }
 
-func startCompanions(ctx context.Context, cfg *config.Config, ms *modem.State, mux *node.RadioMux, db *store.Store, hub *api.Hub, echoTracker *echo.Tracker) ([]*companion.Companion, error) {
-	companions, _, err := reloadCompanions(ctx, nil, cfg, nil, ms, mux, db, hub, echoTracker)
+func startCompanions(ctx context.Context, cfg *config.Config, ms *modem.State, mux *node.RadioMux, db *store.Store, hub *api.Hub, echoTracker *echo.Tracker, telemetry *telemetryPublisher) ([]*companion.Companion, error) {
+	companions, _, err := reloadCompanions(ctx, nil, cfg, nil, ms, mux, db, hub, echoTracker, telemetry)
 	return companions, err
 }
 
@@ -354,7 +385,7 @@ type reloadStats struct {
 }
 
 // reloadCompanions reuses running instances whose block is unchanged; a nil oldCfg/running builds everything.
-func reloadCompanions(ctx context.Context, oldCfg, newCfg *config.Config, running []*companion.Companion, ms *modem.State, mux *node.RadioMux, db *store.Store, hub *api.Hub, echoTracker *echo.Tracker) ([]*companion.Companion, reloadStats, error) {
+func reloadCompanions(ctx context.Context, oldCfg, newCfg *config.Config, running []*companion.Companion, ms *modem.State, mux *node.RadioMux, db *store.Store, hub *api.Hub, echoTracker *echo.Tracker, telemetry *telemetryPublisher) ([]*companion.Companion, reloadStats, error) {
 	// Must reach the observer before Start: it publishes its first status the instant a broker connects.
 	relaying := newCfg.Repeater != nil && !newCfg.Repeater.IsFwdDisabled()
 
@@ -436,6 +467,8 @@ func reloadCompanions(ctx context.Context, oldCfg, newCfg *config.Config, runnin
 		if obs := c.Observer(); obs != nil {
 			obs.SetRelaying(relaying)
 		}
+		// Bound to this companion's id, so it can never answer with another node's channels.
+		c.SetTelemetry(telemetry.MapFor(store.TelemetryNode{Kind: store.NodeKindCompanion, ID: p.block.ID}))
 		if err := c.Start(ctx); err != nil {
 			stopAll()
 			return nil, stats, fmt.Errorf("starting companion %q: %w", p.block.Name, err)

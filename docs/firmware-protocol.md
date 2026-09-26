@@ -21,7 +21,7 @@ Device/firmware facts, repeater CLI parity, wire formats, and the sensor and roo
   minutes/hours: the CLI `get`/`set` handlers convert, and the Repeater page's
   fields are labelled in those units so what you type is what `get
   advert.interval` reports. `Config.Validate` enforces the ranges and
-  `migrateV8` clamped existing rows into them (below minimum → off), so a
+  `008_map_region_path_hash.sql` clamped existing rows into them (below minimum → off), so a
   legacy out-of-range value can't fail validation at load and stop startup. `flood.max` ≤ 64. `dutycycle` is `1-100` and writes `airtime_factor` indirectly.
 - **Wrong password / unreachable repeater**: client sees a silent ~10 s timeout — the firmware drops the packet either way. The current UX doesn't distinguish the two cases. Two things the client does reject immediately: a CLI send from a non-admin session (all three roles drop `CLI_DATA` from non-admins silently) and a login reply whose byte 4 isn't `RESP_SERVER_LOGIN_OK` (`isLoginReply`, so a late status response can't be mistaken for the login). ACL rows with `permissions == 0` are block padding and are never surfaced.
 - **Logout is local-only**: deletes the session from server memory, no radio traffic.
@@ -42,10 +42,10 @@ Device/firmware facts, repeater CLI parity, wire formats, and the sensor and roo
   - Permission lower-2-bits: 0=GUEST (not persisted), 1=READ_ONLY, 2=READ_WRITE, 3=ADMIN.
   - MAX_CLIENTS = 20.
   - Resolve prefix→name in UI by cross-referencing both `discovered_peers` AND `companions` (the companion's own pubkey won't appear in its own peers list).
-- **Telemetry permissions** are firmware-side ACL-gated:
+- **Telemetry permissions** follow the requester's ACL role:
   - Guest: base only (battery voltage + MCU temperature)
-  - Admin: base + location + environment sensors (humidity, external temp, etc)
-  The `inverse_perm_mask` byte in the request is set to `0x00` to ask for everything we're allowed; the firmware filters per the requester's role.
+  - Any other role (read-only, read-write, admin): base + location + environment sensors
+  Base goes out whatever the request's `inverse_perm_mask` says; the mask narrows the other two. We send `0x00` to ask for everything the role allows.
 
 ### Repeater CLI / OTA parity with the firmware
 
@@ -130,10 +130,9 @@ The node we run (`internal/node/repeater`) is measured against MeshCore 1.17.1
   `HW_CMD_GET_MCU_TEMP`, polled by `deviceStatsLoop` into `DeviceStats`). The
   temperature is omitted when the board can't measure one — the modem answers
   `HW_ERR_NO_CALLBACK` and `HaveMCUTemp` stays false — mirroring the firmware's
-  `isnan` check. No sysfs/periph.io host reading is involved, so nothing here
-  assumes Linux.
-  The request's `inverse_perm_mask` and the guest downgrade are likewise not
-  implemented: with no external sensors there is nothing for them to gate.
+  `isnan` check. The operator's channel map adds local sensors, and the inverse
+  mask and guest downgrade apply as the firmware's do (see "Serving telemetry"
+  below).
 - **Neighbours (0x06)** caps its reply at the firmware's 130-byte
   `results_buffer` (11 entries at the default 6-byte prefix) regardless of the
   requested `count`, and answers only `request_version == 0`. The ACL request
@@ -153,6 +152,10 @@ txtTypeCliData       = 1
 REQ types a repeater answers: 0x01 status, 0x03 telemetry, 0x05 ACL,
 0x06 neighbours, 0x07 owner info. 0x02 KEEP_ALIVE is a dead #define in the
 repeater firmware (only the room server implements it) — don't "add" it.
+A companion answers 0x03 only, with no login: BaseChatMesh reaches
+onContactRequest only for a contact, so the contact's own shared secret is the
+credential and a stranger is never answered (though firmware auto-adds every
+node it hears advertise, so in practice most nodes are contacts).
 Every reply is [reflected client timestamp:4][body].
 cliPrefixLen         = 3
 CLI flags byte       = TXT_TYPE_CLI_DATA << 2  (= 4)
@@ -256,9 +259,12 @@ segment is historical; rooms share it too) and the same page:
   is visible in our code, so do not "fix" it into a decoded value.
 - **Channel numbering moved in 1.16.** Firmware <=1.15 lumps external sensors
   onto the self channel (1) alongside the board's own readings; 1.16+ gives each
-  sensor its own channel from 2 up. The MCU emits its own telemetry first, which
-  is why `internal/telemetry` takes the *first* reading of each self-channel type
-  as the node's own and treats later ones as external.
+  sensor its own channel from 2 up. The board's voltage comes first and its MCU
+  temperature last, after the sensors (`simple_repeater` `handleRequest`), so on
+  <=1.15 an external temperature on channel 1 arrives before the board's.
+  `internal/telemetry` takes the *first* reading of each self-channel type as the
+  node's own: right for the voltage, but it takes that external temperature as
+  the board's.
 - **A board upgrading 1.15 -> 1.16 changes its channel keys**, so its stored
   series gets a one-off discontinuity: the old keys stop and new ones start.
   Accepted rather than migrated — the readings either side are the same sensor
@@ -283,6 +289,7 @@ segment is historical; rooms share it too) and the same page:
   in the sensor's `dm:` thread, which the Messages page **keeps listed** (unlike
   repeaters) but with the composer locked — typed text would be executed as a
   CLI command by an admin session or dropped otherwise.
+
 - **Login reply byte 7 is the client's full permission byte** on both
   repeaters and sensors (`[ts:4][RESP_OK][0][isAdmin][permissions][rand:4][ver]`).
   `Session.Permissions` / `LoginResult.Permissions` carry it, so the header
@@ -306,6 +313,54 @@ segment is historical; rooms share it too) and the same page:
   primary action is *Manage* → the sensors route.
 - A sensor's inbound TXT_MSG is a CLI command (admin only) and its outbound text
   is `sendAlert` — there is no chat, which is why Messages never lists them.
+
+## Serving telemetry (the companion and the repeater we run)
+
+`companion_radio` keeps one mode per permission class (`NodePrefs.h`:
+`telemetry_mode_base/loc/env`), each of deny / use-the-contact's-flags /
+allow-all. We store the same three on `companions` as `deny`, `selected` and
+`contacts`, and a contact's grant in its metadata as `telemPerms` (the
+`TELEM_PERM_*` bits, unshifted — the firmware's `contact.flags >> 1` exists only
+because bit 0 there is the favourite flag, which we have no use for).
+
+The gate that surprises people: `MyMesh.cpp` replies **only** if
+`TELEM_PERM_BASE` survives, so denying the base class silences position and
+sensors too, however they are set. The requester narrows further with an inverse
+mask in the first reserved byte. `/companions/:ref/telemetry` sets all of this;
+`internal/node/companion/telemetry.go` applies it.
+
+The repeater is different: it answers any logged-in client, sends base whatever
+the mask says, and gives a guest (ACL role 0) base only
+(`simple_repeater/MyMesh.cpp` `handleRequest`); a blank guest password admits
+anyone. `internal/node/repeater/request.go` does the same.
+
+A reply goes in the firmware's order: the battery, then the sensors, then the
+MCU temperature last. There is never a position: the firmware sends GPS only
+from a GPS module (`EnvironmentSensorManager::querySensors` wants `gps_active`,
+and the boards with one built in send its fix), never the position typed in for
+adverts, and no host here has one. The location class is stored for parity and
+gates nothing. A flood a companion answers with (the path return, or the
+datagram when it has no route back) takes the companion's own path hash size,
+as `sendFloodScoped` uses `path_hash_mode + 1`; companions never scope a flood.
+
+Channel 1 carries a voltage unless the operator mapped one there and its sensor
+is failing. `getBattMilliVolts()` returns 0 on a board with no cell, so a
+firmware node always sends one, and so do we when no row replaces it: a
+mains-powered host publishes 0 V rather than nothing. A channel-1 row replaces
+the built-in reading rather than joining it, which is how a PiSugar or an ADC
+divider becomes the node's battery; if that sensor fails the row publishes
+nothing, since falling back would report a different battery under the same key.
+
+The reply budget is set by the requester's companion, not the packet: it
+re-frames what it decrypts, block padding included, behind an 8-byte push header
+(`companion_radio/MyMesh.cpp`) and `writeFrame` drops a frame over
+`MAX_FRAME_SIZE` 176. So a body holds at most 156 bytes direct, 154 or 153 over a
+zero- or one-byte flood path, and 170 less the path from two bytes up (the path
+return's `[pathLen][path][type]` sits inside the ciphertext).
+`sensor.MaxReplyBody` holds that arithmetic; a map may take 145 bytes, 153 less
+the node's own voltage and temperature, and a longer path sends channel 1
+alone. Channel 0 is refused: the firmware's LPP reader treats it as the
+end of the data.
 
 ## Room servers (chat — "talking" is implemented; management UI is not)
 

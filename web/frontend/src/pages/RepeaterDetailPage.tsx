@@ -333,8 +333,6 @@ export function RepeaterDetailPage({ kind = "repeater" }: { kind?: AdminNodeKind
             body: JSON.stringify({
               isRepeater: kind === "repeater",
               [passwordKey]: password,
-              monitor: contact?.metadata?.monitor ?? false,
-              monitorIntervalSecs: contact?.metadata?.monitorIntervalSecs ?? 0,
             }),
           },
         ).catch(() => {});
@@ -360,8 +358,6 @@ export function RepeaterDetailPage({ kind = "repeater" }: { kind?: AdminNodeKind
             body: JSON.stringify({
               isRepeater: kind === "repeater",
               [passwordKey]: "",
-              monitor: contact?.metadata?.monitor ?? false,
-              monitorIntervalSecs: contact?.metadata?.monitorIntervalSecs ?? 0,
             }),
           },
         ).catch(() => {});
