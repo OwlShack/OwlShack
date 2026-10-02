@@ -74,7 +74,7 @@ func (p *openhopStatsProvider) snapshot() DeviceStats {
 	p.mu.Unlock()
 
 	ds := DeviceStats{UptimeSecs: uint32(time.Since(p.startTime).Seconds())}
-	if at.IsZero() || time.Since(at) > staleReadingAfter {
+	if at.IsZero() || time.Since(at) > StaleReadingAfter {
 		return ds
 	}
 	ds.NoiseFloor = int16(st.NoiseFloor)

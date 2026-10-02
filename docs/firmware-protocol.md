@@ -183,7 +183,9 @@ extra_type: PayloadTypeResponse (0x01), PayloadTypeAck (0x03), or 0xFF (dummy/pa
 
 **Firmware sends PathReturn for ALL flood requests** (login, status, CLI, neighbors) — not just login. Path re-learning is automatic whenever a flood request reaches the repeater.
 
-**Persistence and direction:** `SetOutPath` only updates memory. A learned route is persisted on the companion's contact row (`store.Contacts.UpdateOutPath`, send order: our neighbour first) — that is what `SendContactMessage` routes from. `discovered_peers.out_path` is the **advert path** (peer's neighbour first, display only) and must never be written with a send route; seeding a new contact's route from it reverses the hops (`reverseHops` in `routes_contacts.go`; meshcore-go exports `node.ReverseHops` once released). Node peer tables are hydrated without OutPath on purpose: routes are learned-only, flood first.
+**Persistence and direction:** the node's peer table is the one source for a send route, read by every send and by the path badges. A learned or operator-set route is also saved on the companion's contact row (`store.Contacts.UpdateOutPath` / `SetRoute`, send order: our neighbour first). `hydratePeerTables` loads it back into a companion's table as soon as it is created, before it starts, without overwriting a route RX learned first and adding a peer for a contact never heard advertising, so a route survives a restart and the badge shows the route a request takes. A new contact starts unknown, as the firmware's does (`BaseChatMesh.cpp:111`); a path for a node that is not a contact is refused (404), as it would have nowhere to be saved. `discovered_peers.out_path` is the **advert path** (peer's neighbour first, display only) and is never a send route. A manual `PUT .../contacts/{pubkey}/path` (or `.../repeaters/{pubkey}/path`) takes `{route: flood|direct|path, path, pathHashSize}`; a path must fit the wire's length byte (1 to 3 bytes per hop, whole hops, at most 64 bytes).
+
+**Bytes per hop:** each contact has its own (`companion_contacts.path_hash_size`), set on add from the size the peer floods its adverts at, else the companion's own, and changed only by the operator. Everything sent to it carries it in the length byte (repeater-client requests, DMs, DM and room-push ACKs, telemetry replies), a flood and a 0-hop send included: a repeater with no route back floods its reply at the request's size (`sendFloodReply(..., packet->getPathHashSize())`, simple_repeater `MyMesh.cpp`), and our flood at that size makes the route we learn back come in at it too. A zero-hop advert always reads as 1 byte (`Mesh::sendZeroHop` sets `path_len = 0`), so it is stored as 0, unknown, and never overwrites a flood advert's size. The firmware companion floods at one size for every contact (`_prefs.path_hash_mode`); a size per contact is OwlShack's.
 
 ---
 
@@ -470,7 +472,13 @@ The role facts behind the tags:
 <https://api.meshcore.nz/api/v1/config> `suggested_radio_settings.entries` is
 the source for
 [`radio-presets.json`](../web/frontend/src/data/radio-presets.json) (consumed by
-`RadioPresetSelect` on Settings and in the setup wizard). Regenerate from the
-feed, don't hand-edit. A preset's `network_settings.path_hash_size` becomes
+`RadioPresetSelect` on Settings and in the setup wizard). Regenerate it with
+`go generate ./web` (`web/presetsgen`), don't hand-edit. The generator keeps the
+feed's order, skips an entry Settings would refuse (it runs `config.Validate`
+on each, and takes only the ten LoRa bandwidths) or one missing a field, and
+refuses to write if the feed gives fewer than half the presets the file has.
+`go run ./web/presetsgen -check <file>` exits 1 when the file differs from the
+feed, and only warns when the feed is down or unusable, since regenerating
+cannot fix that; the release workflow runs it on every tag. A preset's `network_settings.path_hash_size` becomes
 `pathHashSize`, which the label shows but does **not** apply — set it on
 Settings (see [mqtt-and-radio.md](./mqtt-and-radio.md)).

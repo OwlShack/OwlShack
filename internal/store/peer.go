@@ -17,7 +17,8 @@ type Peer struct {
 	Feat1  uint16
 	Feat2  uint16
 	// Advert path, peer's neighbour first.
-	OutPath         []byte
+	OutPath []byte
+	// OutPathHashSize is the size the peer floods its adverts at; 0 is unknown, as a zero-hop advert says nothing, and an upsert of 0 keeps the one known.
 	OutPathHashSize uint8
 	LastAdvertTS    uint32
 	LastSeen        time.Time
@@ -44,7 +45,7 @@ func (r *PeerRepo) Upsert(ctx context.Context, p *Peer) error {
 			feat1              = excluded.feat1,
 			feat2              = excluded.feat2,
 			out_path           = excluded.out_path,
-			out_path_hash_size = excluded.out_path_hash_size,
+			out_path_hash_size = CASE WHEN excluded.out_path_hash_size = 0 THEN discovered_peers.out_path_hash_size ELSE excluded.out_path_hash_size END,
 			last_advert_ts     = excluded.last_advert_ts,
 			last_seen          = excluded.last_seen,
 			snr                = excluded.snr,
@@ -227,12 +228,21 @@ func (r *PeerRepo) FindByPrefix(ctx context.Context, prefix []byte) (*Peer, erro
 }
 
 func (r *PeerRepo) LookupByHash(ctx context.Context, hash []byte) ([]string, error) {
+	return r.namesByHash(ctx, hash, "")
+}
+
+// LookupRepeatersByHash names the repeaters a path hop could be, most recently heard first, as the map resolves one.
+func (r *PeerRepo) LookupRepeatersByHash(ctx context.Context, hash []byte) ([]string, error) {
+	return r.namesByHash(ctx, hash, " AND type = 'REPEATER' ORDER BY last_seen DESC")
+}
+
+func (r *PeerRepo) namesByHash(ctx context.Context, hash []byte, filter string) ([]string, error) {
 	if len(hash) == 0 {
 		return nil, nil
 	}
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT name FROM discovered_peers
-		WHERE substr(pubkey, 1, ?) = ?`, len(hash), hash)
+		WHERE substr(pubkey, 1, ?) = ?`+filter, len(hash), hash)
 	if err != nil {
 		return nil, fmt.Errorf("querying peers by hash: %w", err)
 	}

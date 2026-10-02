@@ -9,9 +9,11 @@ import (
 	"math"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/meshcore-go/OwlShack/internal/api"
+	"github.com/meshcore-go/OwlShack/internal/modem"
 	"github.com/meshcore-go/OwlShack/internal/sensor"
 	"github.com/meshcore-go/OwlShack/internal/store"
 )
@@ -25,7 +27,8 @@ const airQualityPeriod = 3 * time.Second
 // startSensors runs the hub for the life of the process, outside the radio lifecycle.
 func startSensors(ctx context.Context, db *store.Store, hub *api.Hub, log *slog.Logger) (*sensor.Hub, error) {
 	i2c := sensor.I2CProvider{Period: airQualityPeriod, State: sensorState{db: db}}
-	sh := sensor.NewHub(log, i2c, sensor.PiSugarProvider{}, &sensor.VirtualProvider{}, sensor.HTTPProvider{})
+	board := sensor.RadioBoardProvider{Board: boardReadings, MaxAge: modem.StaleReadingAfter}
+	sh := sensor.NewHub(log, i2c, sensor.PiSugarProvider{}, board, &sensor.VirtualProvider{}, sensor.HTTPProvider{})
 	if err := loadSensors(ctx, db, sh); err != nil {
 		return nil, err
 	}
@@ -34,6 +37,31 @@ func startSensors(ctx context.Context, db *store.Store, hub *api.Hub, log *slog.
 	})
 	go sh.Poll(ctx, sensorPollInterval)
 	return sh, nil
+}
+
+// liveRadio is the running radio generation, for the sensor hub, which outlives every reconnect.
+var liveRadio atomic.Pointer[modem.State]
+
+// boardReadings is the running board's cached readings; only a transport with a board to answer the probe has any.
+func boardReadings() (sensor.BoardReadings, error) {
+	ms := liveRadio.Load()
+	if ms == nil || ms.Stats == nil {
+		return sensor.BoardReadings{}, sensor.ErrNoRadio
+	}
+	last, silentFrom, ok := radioSeen.answered(ms.Stats)
+	if !ok {
+		return sensor.BoardReadings{}, sensor.ErrNoBoard
+	}
+	ds := ms.Stats.CachedStats()
+	return sensor.BoardReadings{
+		Transport:   ms.Stats.Transport(),
+		BatteryV:    float64(ds.BatteryMV) / 1000,
+		HaveBattery: ds.HaveBattery,
+		MCUTempC:    ds.MCUTempC,
+		HaveMCUTemp: ds.HaveMCUTemp,
+		At:          last,
+		SilentSince: silentFrom,
+	}, nil
 }
 
 // sensorState is the store behind a sensor's learned calibration; a save waits for the writer, so a reopen reads what its close saved.

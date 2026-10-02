@@ -28,7 +28,8 @@ import {
 } from "@/components/ui/sheet";
 import { LoadErrorAlert } from "@/components/LoadErrorAlert";
 import { PageHeader } from "@/components/PageHeader";
-import { ConnectionPill, PEER_TYPE_HEX } from "@/components/StatusIndicator";
+import { HeaderButton } from "@/components/HeaderButton";
+import { PEER_TYPE_HEX } from "@/components/StatusIndicator";
 import { snrFill, snrTextClass } from "@/components/SignalStrength";
 import { originIcon } from "@/components/DiscoverMap";
 import {
@@ -128,7 +129,7 @@ export function ConnectionWebPage() {
     [reload],
   );
   useEffect(() => () => window.clearTimeout(pending.current ?? undefined), []);
-  const { connected } = useWebSocket(["packets"], handleMessage);
+  useWebSocket(["packets"], handleMessage);
 
   const nodes = useMemo(() => {
     const m = new Map<string, WebNode>();
@@ -356,18 +357,9 @@ export function ConnectionWebPage() {
           </span>
         }
         actions={
-          <>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={reload}
-              className="h-7 gap-1.5 px-2 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground hover:text-primary"
-            >
-              <RefreshCw className={cn("size-3", loading && "animate-spin")} />
-              refresh
-            </Button>
-            <ConnectionPill connected={connected} />
-          </>
+          <HeaderButton icon={RefreshCw} busy={loading} onClick={reload}>
+            {loading ? "refreshing" : "refresh"}
+          </HeaderButton>
         }
       />
 

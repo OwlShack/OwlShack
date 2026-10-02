@@ -60,6 +60,26 @@ func (a *radioActivity) keepReply(stats modem.StatsProvider) {
 	}
 }
 
+// answered is the board's last answer, kept across reconnects, and when its silence began: that answer, else when the first unanswered link connected, since a board hung before its first answer is as stuck as one that went quiet. ok is false where the transport cannot be asked.
+func (a *radioActivity) answered(stats modem.StatsProvider) (last, silentFrom time.Time, ok bool) {
+	lr, ok := stats.(interface{ LastReply() time.Time })
+	if !ok {
+		return time.Time{}, time.Time{}, false
+	}
+	last = lr.LastReply()
+	if kept := a.lastReply.Load(); kept != 0 && (last.IsZero() || kept > last.UnixNano()) {
+		last = time.Unix(0, kept)
+	}
+	silentFrom = last
+	if s := a.silentSince.Load(); silentFrom.IsZero() && s != 0 {
+		silentFrom = time.Unix(0, s)
+	}
+	if c, ok := stats.(interface{ ConnectedAt() time.Time }); ok && silentFrom.IsZero() {
+		silentFrom = c.ConnectedAt()
+	}
+	return last, silentFrom, true
+}
+
 // radioSeen is written by the packet logger, which sees every frame in both directions.
 var radioSeen radioActivity
 
@@ -195,19 +215,8 @@ func (b *backend) radioHealth(now time.Time, act *radioActivity) api.RadioHealth
 	}
 
 	// The liveness probe's own signal; null on a transport that cannot be probed, rather than claiming silence.
-	if lr, ok := b.stats.(interface{ LastReply() time.Time }); ok {
-		t := lr.LastReply()
-		if kept := act.lastReply.Load(); kept != 0 && (t.IsZero() || kept > t.UnixNano()) {
-			t = time.Unix(0, kept)
-		}
-		// A board hung before its first answer is as stuck as one that went quiet, so its silence runs from connecting.
-		if s := act.silentSince.Load(); t.IsZero() && s != 0 {
-			t = time.Unix(0, s)
-		}
-		if c, ok := b.stats.(interface{ ConnectedAt() time.Time }); ok && t.IsZero() {
-			t = c.ConnectedAt()
-		}
-		h.LastReplySecs = secsSinceTime(t, now)
+	if _, silentFrom, ok := act.answered(b.stats); ok {
+		h.LastReplySecs = secsSinceTime(silentFrom, now)
 	}
 
 	// false: a monitor scrapes on a schedule, and polling the board per scrape puts traffic on the link.

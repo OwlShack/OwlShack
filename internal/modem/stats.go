@@ -46,7 +46,7 @@ type LinkStats struct {
 	// HwDecodeErrors is a malformed SETHARDWARE frame, i.e. the battery/temp/noise-floor channel, not a mesh packet.
 	HwDecodeErrors       *uint64
 	InboundDroppedOldest *uint64
-	// RxMetaTimeouts: metadata never arrived. RxMetaMisattributed: matched to the wrong packet, so its SNR/RSSI is wrong.
+	// Both count signal reports lost on the link, whose packet goes out with no SNR/RSSI: a timeout waited 1 s, a misattribution was caught by the next frame.
 	RxMetaTimeouts      *uint64
 	RxMetaMisattributed *uint64
 	HwErrors            *uint64 // HW_RESP_ERROR frames received
@@ -70,7 +70,7 @@ type StatsProvider interface {
 	Transport() string
 	RadioConfig() RadioInfo
 	Stats(ctx context.Context) DeviceStats
-	// CachedStats is the last readings the board volunteered: no wire traffic, no 500ms wait, up to staleReadingAfter old.
+	// CachedStats is the last readings the board volunteered: no wire traffic, no 500ms wait, up to StaleReadingAfter old.
 	CachedStats() DeviceStats
 	// LinkStats takes no ctx: atomic loads, unlike Stats which polls the board over the wire.
 	LinkStats() LinkStats
@@ -98,9 +98,9 @@ type kissStatsProvider struct {
 	haveMCUTemp bool
 }
 
-// staleReadingAfter is how long a board reading survives without the modem answering. Longer than
+// StaleReadingAfter is how long a board reading survives without the modem answering. Longer than
 // one probe interval so a single dropped reply does not flap the value in and out of the payload.
-const staleReadingAfter = 45 * time.Second
+const StaleReadingAfter = 45 * time.Second
 
 // ConnectedAt is when this link was set up, the start of a silence for a board that has never answered.
 func (p *kissStatsProvider) ConnectedAt() time.Time { return p.startTime }
@@ -216,7 +216,7 @@ func (p *kissStatsProvider) Stats(ctx context.Context) DeviceStats {
 // board at the moment the port was closed.
 func (p *kissStatsProvider) snapshot() DeviceStats {
 	last := p.LastReply()
-	fresh := !last.IsZero() && time.Since(last) <= staleReadingAfter
+	fresh := !last.IsZero() && time.Since(last) <= StaleReadingAfter
 
 	p.mu.Lock()
 	defer p.mu.Unlock()

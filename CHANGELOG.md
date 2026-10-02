@@ -3,13 +3,37 @@
 Notable changes per release. Dates are the tag date; unreleased work sits at the
 top until tagged.
 
-## Unreleased
+## v1.5.0 - 2026-10-01
 
-Schema `user_version` 19: adds the sensor tables, who may read each companion's telemetry, where a
-CAP bot's alerts must be, and which map tiles to use.
+Baseline `v1.4.2`. Sensors on the Pi, sent over the mesh; bytes per hop and one Path window for
+every contact; CAP bots that keep to one place; satellite and topo maps; a message's paths on the
+map; a health check and status dot you can trust; openHop Modems behind a USB-serial chip; and
+one style for every page header. It also fixes logging in to repeaters and rooms with an imported
+private key.
+
+Schema `user_version` 16 to 21: adds the sensor tables, who may read each companion's telemetry,
+where a CAP bot's alerts must be, which map tiles to use and each contact's bytes per hop, and
+moves an openHop serial connection's baud rate to 921600. The database is copied to
+`meshcore.db.pre-v16-to-v21` before it upgrades.
+
+### Upgrading
+
+- **A broker being down no longer marks the whole node degraded.** `/api/health`'s `status` now
+  covers only what the node needs to work: the radio and a running node. MQTT has its own
+  `mqtt.status`: `ok`, `degraded` when an enabled broker is not connected, or `off`. A monitor
+  that alerted on MQTT through `status` should watch `mqtt.status` instead.
 
 ### Added
 
+- **Bytes per hop for each contact.** A contact is added at the size it floods its adverts at, and
+  everything sent to it by flood or direct goes out at that size: requests, DMs, ACKs and
+  replies. A learned path keeps the size it was learned at. Before, requests to a repeater and DMs
+  always flooded at 1 byte per hop. A saved path at another size is dropped on upgrade, so the next
+  send floods and learns one at the right size.
+- **One Path window for every contact.** Repeaters, rooms, sensors, chats and the contact page share
+  it. It shows the route in use with each hop named, and sets Flood, Direct or a path at a chosen
+  bytes per hop. Pick the hops from the repeater list, as on the Trace page, or type them as hex.
+  A hop whose hash more than one repeater shares is marked, here and on the Trace page.
 - **Sensors page.** Reads I2C sensors on the Pi every 5 seconds: SHTC3, LPS22HB, BME680, ENS210,
   ADS1115 or SGM58031 ADC inputs, and a PiSugar UPS. Each card shows whether it is healthy,
   calibrating, waiting, stale or failing.
@@ -21,6 +45,9 @@ CAP bot's alerts must be, and which map tiles to use.
   report's temperature and wind. Headers and logins are supported, and Test tries it before you save.
 - **Air quality from the BME680.** An air-quality index and CO2 and VOC estimates after a 5-minute
   run-in. It calibrates to your air over days and remembers it across restarts.
+- **The radio board as a sensor.** Add the battery voltage and MCU temperature of the KISS or
+  openHop board your radio runs on, like any other sensor. It reads what OwlShack already asks the
+  board for, so it adds nothing to the link.
 - **Sensors over the mesh.** Choose which readings the repeater and each companion send when
   another node asks.
 - **CAP alerts for one place.** A CAP bot can keep to alerts near a point, picked on a map or
@@ -40,6 +67,9 @@ CAP bot's alerts must be, and which map tiles to use.
   contacts or every contact. All three start at no one.
 - **Satellite and topo views on the Map page.** Switch between the map, Esri satellite imagery and
   OpenTopoMap at the top right of the map. Your browser remembers the choice.
+- **A message's reception paths can be shown on the map.** In View paths, open a path and choose
+  On map to plot the repeaters it came through, as the Peers page already does for a peer's path.
+  The same works for the echoes of a message you sent, drawn as the loop from you and back.
 
 ### Changed
 
@@ -52,13 +82,46 @@ CAP bot's alerts must be, and which map tiles to use.
 - **Fewer writes to the SD card.** The database syncs to disk in batches instead of after every
   packet. A power cut can lose the last few seconds of packets and readings, but a setting you
   saved is on disk before the page says it is saved.
-- **A broker being down no longer marks the whole node degraded.** `/api/health`'s `status` now
-  covers only what the node needs to work: the radio and a running node. MQTT has its own
-  `mqtt.status`: `ok`, `degraded` when an enabled broker is not connected, or `off`. A monitor
-  that alerted on MQTT through `status` should watch `mqtt.status` instead.
+- **The radio presets match MeshCore's current list.** New: Canada, USA, USA - Southern
+  California and Netherlands (Limburg). USA/Canada (Recommended) is gone, since USA and Canada now
+  have their own. Australia (Narrow) is CR 7, and Czech Republic (Narrow) shows its 2-byte path
+  hash. Each release now ships the list as it stands on the day.
+- **"Signal meta misattributed" on the Radio page is now "Signal meta unmatched".** It counts
+  signal reports lost between a KISS board and OwlShack. The packet goes out with no SNR or RSSI,
+  so the count never meant a wrong reading was published. The MQTT key `rx_meta_misattributed` is
+  unchanged.
+- **Page header buttons share one style.** Every button at the top of a page is the same size and
+  shape with an icon, filled for the page's main action (Add, Save, Scan) and outlined for the
+  rest. A spinner shows while one is working. Reload and Refresh are both Refresh now. On a phone
+  they sit beside the page title instead of on a row of their own, and Monitoring's node actions
+  and a repeater's links back to Repeaters and Messages fold into the page's menu.
+- **The LIVE indicator is gone from every page.** The System line in the sidebar, and now the dot
+  on the logo, already show when the live connection drops. The Repeater page's badge, which said
+  LIVE or OFFLINE for whether your repeater is running, now says RUNNING or STOPPED.
+- **The Messages page header takes less room.** Thread search is a button next to sort: tap it to
+  open the search field, and the cross or Escape clears and closes it. A search you have typed
+  keeps the field open. Sort is an icon too, with a tick on the current order.
+- **The dot on the OwlShack logo shows the system status.** It was always green: now it is green
+  when nominal, amber when degraded, red when OwlShack cannot be reached, and grey while checking,
+  matching the System line. It is the only status shown when the sidebar is collapsed. The dot
+  beside the clock is gone, and status dots no longer pulse when the device asks for reduced motion.
 
 ### Fixed
 
+- **Logging in with an imported private key.** A companion using a key imported from a device
+  (`prv.key`) could not log in to any repeater or room, or ask a contact for telemetry: the
+  node dropped every request as undecryptable, so each one timed out. A generated key was fine.
+- **A repeater's path shows the route in use.** After a restart the repeater page and the chat's
+  Path dialog read Flood while requests still went direct, until you reset the path. The saved
+  route is now loaded at start, so what you see is what is sent.
+- **A new contact starts with no route.** Adding a contact used the reversed path of the advert
+  we heard as its route. It now floods until the contact answers with a path, as the firmware
+  does.
+- **A direct contact shows as Direct.** The contact page showed a direct neighbour as Flood.
+- **Set path only takes a path that fits.** A path that was not whole hops, or used more than 3
+  bytes per hop, was sent with a length that did not match. Those are now refused with a reason.
+- **Resetting a path always sticks.** A reset or a set path could be lost when the database was
+  busy, and the old route came back after a restart.
 - **Meteoalarm CAP feeds work.** Every alert from a Meteoalarm feed failed to load, because the
   bot fetched the feed entry's web page rather than its alert document.
 - **A CAP alert is sent once.** A feed that posts one alert under many entries, as Meteoalarm does
@@ -92,6 +155,17 @@ CAP bot's alerts must be, and which map tiles to use.
   degraded with the reasons when you tap it, or offline when the page cannot reach OwlShack.
 - **The database's log file never shrank.** After a busy spell, such as a restore, it stayed at its
   largest size. It now drops back to 4 MB, and `/api/health` reports its size as `walBytes`.
+- **openHop Modems over serial connect at 921600 baud.** The firmware runs its serial link at 921600
+  on every board, but OwlShack opened it at 115200. A board with native USB did not mind, but one
+  behind a USB-serial chip, such as a Heltec V3, never answered. Choosing openHop over serial now
+  sets 921600 and shows it, a saved connection is moved to it on upgrade, and any other rate is
+  refused.
+- **A repeater's type badge no longer sits under its Copy button.** On a phone, a long name pushed
+  the badge across the button. The badge now wraps below the name, and a name too long for the
+  line is cut short, with the full name on hover.
+- **A message's path names the same repeaters as the map.** Where several nodes share a hop's
+  hash, View paths and Echoes named whichever came first, which could be an old repeater or even
+  a chat node. They now name the repeater heard most recently, as the map and the Peers page do.
 
 ## v1.4.2 - 2026-09-21
 
