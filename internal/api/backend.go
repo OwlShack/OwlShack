@@ -520,8 +520,10 @@ type SettingsInput struct {
 	ModemToken   *string `json:"modemToken"`
 	PathHashSize *int    `json:"pathHashSize"`
 	// DutyCycle is a TX airtime cap percentage (0 < pct <= 100); null means the default, not "keep".
-	DutyCycle     *float64 `json:"dutyCycle"`
-	SetupComplete *bool    `json:"setupComplete"`
+	DutyCycle *float64 `json:"dutyCycle"`
+	// PacketRetentionDays is how many days of packets to keep; omit = keep the stored value.
+	PacketRetentionDays *int  `json:"packetRetentionDays"`
+	SetupComplete       *bool `json:"setupComplete"`
 }
 
 type MqttInput struct {

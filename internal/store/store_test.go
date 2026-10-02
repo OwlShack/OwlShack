@@ -783,10 +783,94 @@ func TestPacketRepo_ListFilter(t *testing.T) {
 	}
 }
 
+// received_at is host-zone text, so a SQL-text compare would be off by the UTC offset; +13h spans every window here.
+func TestPacketRepo_PruneBatchBeforeAcrossZones(t *testing.T) {
+	t.Parallel()
+	st := newTestStore(t)
+	ctx := t.Context()
+
+	nz := time.FixedZone("NZDT", 13*3600)
+	now := time.Now()
+	cutoff := now.Add(-2 * time.Hour)
+	ages := []time.Duration{5 * time.Hour, 3 * time.Hour, 90 * time.Minute, 10 * time.Minute}
+	for _, age := range ages {
+		raw := []byte{meshcore.MakeHeader(meshcore.RouteTypeFlood, 4, 0), 0x00, 0xDE, 0xAD}
+		rt, pt := meshcore.RouteTypeFlood, uint8(4)
+		rec := &PacketRecord{ReceivedAt: now.Add(-age).In(nz), Direction: "rx", Raw: raw, RouteType: &rt, PayloadType: &pt}
+		if err := st.Packets.Insert(ctx, rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	more, err := st.Packets.PruneBatchBefore(ctx, cutoff, 1)
+	if err != nil || !more {
+		t.Fatalf("first batch of 1: more=%v err=%v, want more=true", more, err)
+	}
+	if more, err = st.Packets.PruneBatchBefore(ctx, cutoff, 500); err != nil || more {
+		t.Fatalf("second batch: more=%v err=%v, want more=false", more, err)
+	}
+
+	var got []time.Time
+	if err := st.Packets.ScanFloodRxSince(ctx, now.Add(-24*time.Hour), func(p *PacketRecord) {
+		got = append(got, p.ReceivedAt)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("kept %d packets, want the 2 newer than the cutoff", len(got))
+	}
+	for _, at := range got {
+		if at.Before(cutoff) {
+			t.Errorf("kept a packet from %v, older than cutoff %v", at, cutoff)
+		}
+	}
+
+	got = nil
+	if err := st.Packets.ScanFloodRxSince(ctx, now.Add(-time.Hour), func(p *PacketRecord) {
+		got = append(got, p.ReceivedAt)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Errorf("last hour scanned %d packets, want 1", len(got))
+	}
+}
+
+// A "none of these" pin is a stored NULL; it must survive as a present key, not read back as no pin.
+func TestHopPinRepo_NonePinIsPresent(t *testing.T) {
+	t.Parallel()
+	st := newTestStore(t)
+	ctx := t.Context()
+
+	key := []byte{0xab, 0x01, 0x02}
+	if err := st.HopPins.Set(ctx, "ab", key); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.HopPins.Set(ctx, "ab", nil); err != nil { // re-pin to none
+		t.Fatal(err)
+	}
+	if err := st.HopPins.Set(ctx, "cd", key); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.HopPins.Delete(ctx, "cd"); err != nil {
+		t.Fatal(err)
+	}
+	pins, err := st.HopPins.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pk, ok := pins["ab"]; !ok || pk != nil {
+		t.Errorf(`pins["ab"] = %x, present %v; want a present nil`, pk, ok)
+	}
+	if _, ok := pins["cd"]; ok {
+		t.Error(`pins["cd"] still present after Delete`)
+	}
+}
+
 // Bump wantVersion whenever a migration file is added.
 func TestStore_MigrateUserVersion(t *testing.T) {
 	t.Parallel()
-	const wantVersion = 21 // one per file in migrations/
+	const wantVersion = 23 // one per file in migrations/
 	st := newTestStore(t)
 	var v int
 	if err := st.db.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&v); err != nil {
@@ -872,7 +956,7 @@ func TestStore_UpgradeFromReleasedSchema(t *testing.T) {
 		cols[name] = true
 	}
 	rows.Close()
-	for _, c := range []string{"duty_cycle_pct", "map_provider", "map_dark_style", "map_tile_key", "path_hash_size"} {
+	for _, c := range []string{"duty_cycle_pct", "map_provider", "map_dark_style", "map_tile_key", "path_hash_size", "packet_retention_days"} {
 		if !cols[c] {
 			t.Errorf("settings.%s missing after the upgrade", c)
 		}

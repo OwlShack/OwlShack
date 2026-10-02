@@ -316,6 +316,10 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("dutyCycle is a percentage: must be greater than 0 and at most 100")
 	}
 
+	if c.PacketRetentionDays != nil && (*c.PacketRetentionDays < 1 || *c.PacketRetentionDays > 365) {
+		return fmt.Errorf("packetRetentionDays must be between 1 and 365")
+	}
+
 	if c.Mqtt != nil {
 		if c.Mqtt.Node != nil && *c.Mqtt.Node != "" && !seen[*c.Mqtt.Node] {
 			return fmt.Errorf("mqtt node %q does not match any companion", *c.Mqtt.Node)

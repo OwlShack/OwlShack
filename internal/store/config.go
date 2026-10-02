@@ -43,8 +43,10 @@ type Settings struct {
 	ModemToken   *string
 	PathHashSize *int // default flood path hash width in bytes; nil = 1
 	// DutyCyclePct caps TX airtime per hour as a percentage; nil = library default (50%).
-	DutyCyclePct  *float64
-	SetupComplete bool
+	DutyCyclePct *float64
+	// PacketRetentionDays is how long the packet log keeps rows; nil = DefaultPacketRetentionDays.
+	PacketRetentionDays *int
+	SetupComplete       bool
 }
 
 type SettingsRepo struct{ db *sql.DB }
@@ -52,11 +54,11 @@ type SettingsRepo struct{ db *sql.DB }
 func (r *SettingsRepo) Get(ctx context.Context) (*Settings, error) {
 	var s Settings
 	err := r.db.QueryRowContext(ctx, `
-		SELECT log_level, connection_type, connection, baud_rate, spi_board, freq, bw, sf, cr, tx, listen_addr, map_provider, map_dark_style, map_tile_key, path_hash_size, duty_cycle_pct, setup_complete, modem_token
+		SELECT log_level, connection_type, connection, baud_rate, spi_board, freq, bw, sf, cr, tx, listen_addr, map_provider, map_dark_style, map_tile_key, path_hash_size, duty_cycle_pct, packet_retention_days, setup_complete, modem_token
 		FROM settings WHERE id = 1`).Scan(
 		&s.LogLevel, &s.ConnectionType, &s.Connection, &s.BaudRate, &s.SPIBoard,
 		&s.Freq, &s.BW, &s.SF, &s.CR, &s.TX, &s.ListenAddr, &s.MapProvider, &s.MapDarkStyle, &s.MapTileKey, &s.PathHashSize,
-		&s.DutyCyclePct, &s.SetupComplete, &s.ModemToken,
+		&s.DutyCyclePct, &s.PacketRetentionDays, &s.SetupComplete, &s.ModemToken,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("getting settings: %w", err)
@@ -64,11 +66,19 @@ func (r *SettingsRepo) Get(ctx context.Context) (*Settings, error) {
 	return &s, nil
 }
 
+// PacketRetentionDays is the stored setting, or DefaultPacketRetentionDays when unset or unreadable.
+func (r *SettingsRepo) PacketRetentionDays(ctx context.Context) int {
+	if s, err := r.Get(ctx); err == nil && s.PacketRetentionDays != nil {
+		return *s.PacketRetentionDays
+	}
+	return DefaultPacketRetentionDays
+}
+
 func (r *SettingsRepo) Set(ctx context.Context, s *Settings) error {
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO settings
-			(id, log_level, connection_type, connection, baud_rate, spi_board, freq, bw, sf, cr, tx, listen_addr, map_provider, map_dark_style, map_tile_key, path_hash_size, duty_cycle_pct, setup_complete, modem_token)
-		VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			(id, log_level, connection_type, connection, baud_rate, spi_board, freq, bw, sf, cr, tx, listen_addr, map_provider, map_dark_style, map_tile_key, path_hash_size, duty_cycle_pct, packet_retention_days, setup_complete, modem_token)
+		VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			log_level=excluded.log_level, connection_type=excluded.connection_type,
 			spi_board=excluded.spi_board,
@@ -76,10 +86,11 @@ func (r *SettingsRepo) Set(ctx context.Context, s *Settings) error {
 			bw=excluded.bw, sf=excluded.sf, cr=excluded.cr, tx=excluded.tx,
 			listen_addr=excluded.listen_addr, map_provider=excluded.map_provider, map_dark_style=excluded.map_dark_style, map_tile_key=excluded.map_tile_key,
 			path_hash_size=excluded.path_hash_size, duty_cycle_pct=excluded.duty_cycle_pct,
+			packet_retention_days=excluded.packet_retention_days,
 			setup_complete=excluded.setup_complete, modem_token=excluded.modem_token`,
 		s.LogLevel, s.ConnectionType, s.Connection, s.BaudRate, s.SPIBoard,
 		s.Freq, s.BW, s.SF, s.CR, s.TX, s.ListenAddr, s.MapProvider, s.MapDarkStyle, s.MapTileKey, s.PathHashSize,
-		s.DutyCyclePct, s.SetupComplete, s.ModemToken,
+		s.DutyCyclePct, s.PacketRetentionDays, s.SetupComplete, s.ModemToken,
 	)
 	if err != nil {
 		return fmt.Errorf("setting settings: %w", err)

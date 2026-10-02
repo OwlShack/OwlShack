@@ -25,7 +25,7 @@ function dotIcon(color: string): L.DivIcon {
   });
 }
 
-function originIcon(): L.DivIcon {
+export function originIcon(): L.DivIcon {
   return L.divIcon({
     className: "meshcore-discover-origin",
     html: `<span style="display:block;width:16px;height:16px;border-radius:9999px;border:3px solid var(--primary);background:transparent;box-shadow:0 0 0 2px rgba(0,0,0,0.65),0 0 8px var(--primary);"></span>`,

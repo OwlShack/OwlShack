@@ -113,6 +113,9 @@ type Config struct {
 	// PERCENTAGE, as the firmware's `set dutycycle` takes it; the library's inverted airtime factor is derived in AirtimeFactorOr. nil = 50%.
 	DutyCycle *float64 `json:"dutyCycle,omitempty" yaml:"dutyCycle,omitempty" toml:"dutyCycle,omitempty"`
 
+	// Days the packet log keeps received and sent packets; nil = 7.
+	PacketRetentionDays *int `json:"packetRetentionDays,omitempty" yaml:"packetRetentionDays,omitempty" toml:"packetRetentionDays,omitempty"`
+
 	// nil/false until the first-run wizard finishes: tells "never configured" from "deliberately observer-only".
 	SetupComplete *bool `json:"setupComplete,omitempty" yaml:"setupComplete,omitempty" toml:"setupComplete,omitempty"`
 
