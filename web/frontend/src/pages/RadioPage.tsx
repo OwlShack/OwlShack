@@ -52,6 +52,7 @@ export function RadioPage() {
   // Percentage, like the firmware's `set dutycycle`. Blank = the 50% default.
   const [dutyCycle, setDutyCycle] = useState("");
   const [logLevel, setLogLevel] = useState("info");
+  const [packetDays, setPacketDays] = useState("");
 
   useEffect(() => {
     if (!settings) return;
@@ -71,6 +72,7 @@ export function RadioPage() {
     setPathHashSize(String(settings.pathHashSize ?? 1));
     setDutyCycle(settings.dutyCycle != null ? String(settings.dutyCycle) : "");
     setLogLevel(settings.logLevel ?? "info");
+    setPacketDays(settings.packetRetentionDays != null ? String(settings.packetRetentionDays) : "");
   }, [settings]);
 
   // Fetched once on mount: the list is compiled into the binary, so it cannot
@@ -110,6 +112,8 @@ export function RadioPage() {
         pathHashSize: parseInt(pathHashSize, 10) || 1,
         dutyCycle: dutyCycle.trim() === "" ? null : Number(dutyCycle),
         logLevel: logLevel || null,
+        // Blank keeps what is stored; the server has no "reset to default" for it.
+        ...(packetDays.trim() === "" ? {} : { packetRetentionDays: parseInt(packetDays, 10) }),
         // setupComplete omitted on purpose: the server keeps the stored value.
       });
       toast.success("Radio settings saved");
@@ -264,6 +268,13 @@ export function RadioPage() {
                 options={LOG_LEVELS.map((l) => ({ value: l, label: l }))}
                 onChange={setLogLevel}
                 hint="-v / -vv flags override this"
+              />
+              <TextField
+                label="Packet history (days)"
+                value={packetDays}
+                onChange={setPacketDays}
+                placeholder="7"
+                hint="how long the packet log and Connection Web keep data · 1-365 · lowering it deletes older packets within the hour, and they cannot be recovered"
               />
               <SelectField
                 label="Map tiles"

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ConfigCompanion, ConfigRepeater } from "@/lib/configApi";
+import { wrapLon } from "@/lib/leaflet";
 
 // Our own position in decimal degrees, or null when neither node has one configured. Both
 // personalities share one radio, so either coordinate describes the same antenna; the repeater is
@@ -10,7 +11,8 @@ export function useOwnPosition(): [number, number] | null {
   useEffect(() => {
     let live = true;
     const at = (lat: number | null, lon: number | null): [number, number] | null =>
-      lat != null && lon != null && (lat !== 0 || lon !== 0) ? [lat, lon] : null;
+      // Config does not range-check longitude; wrapped so a -185 lands on the same world copy as the peers.
+      lat != null && lon != null && (lat !== 0 || lon !== 0) ? [lat, wrapLon(lon)] : null;
 
     Promise.all([
       fetch("/api/config/repeater").then((r) => (r.ok ? r.json() : null)),

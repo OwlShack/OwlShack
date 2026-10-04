@@ -163,6 +163,7 @@ func Run(ctx context.Context, importPath string, verbosity int) error {
 
 	echoTracker := echo.NewTracker(db, srv.Hub(), slog.Default())
 	go echoTracker.PruneLoop(ctx)
+	go packetPruneLoop(ctx, db)
 
 	// Long-lived across reloads: reaches the current companions through compReg, re-pointed on each reload.
 	compReg := newCompanionRegistry()

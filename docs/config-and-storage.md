@@ -392,6 +392,45 @@ without hand-copying `meshcore.db`. UI is `BackupWizard` (opened from
   on name the copy when they refuse a newer database (v1.4.x does not). Nothing
   is copied for a fresh database.
 
+## Packet log & Connection Web
+
+- **The packet log is kept by age, not row count.** `settings.packet_retention_days`
+  (Settings -> Service, 1-365, NULL = 7) is read by `packetPruneLoop`
+  (`internal/app/packetlog.go`) at startup and hourly; saving it needs no reload.
+  It deletes 500 rows per writer turn (`PacketRepo.PruneBatchBefore`) so a long
+  backlog never fills the writer queue and drops RX writes. SQLite does not
+  shrink the file, so lowering the setting frees pages for reuse only.
+- **`received_at` must never be compared as SQL text.** modernc writes it as Go's
+  `time.String()` in the host zone (`... +1200 NZST`), so `datetime('now', ...)`
+  is off by the UTC offset. The prune and `ScanFloodRxSince` walk ids and compare
+  parsed times in Go, which assumes ids follow time. The backup day windows
+  above still compare in SQL and inherit the offset.
+- **`GET /api/connection-web?hours=N`** (`routes_connection_web.go`) folds RX
+  flood packets (not DIRECT, not TRACE, whose path holds SNR) into distinct
+  routes ending at `"self"`. Hop hashes resolve to REPEATER peers only; colliding
+  hashes pick the candidate nearest the next located hop toward us, else the most
+  recently seen. Each node returns every repeater matching its hash as
+  `candidates`. The source is only
+  known for adverts. A path holding our repeater's hash is dropped as our own
+  relay heard back. SNR/RSSI belong to a route's last link only.
+- **Hop pins** (`hop_pins`, `PUT|DELETE /api/connection-web/pins/{hash}`) let the
+  operator settle a hash: a pubkey overrides the distance pick, a null pubkey says
+  none of the known repeaters (the real relay never adverted), and DELETE returns
+  it to automatic. Pins apply during resolution, not after, because each pick is
+  what the next hop out measures from. A pin to a deleted peer falls back to
+  automatic; a backup without peers drops the pins too.
+- `first` counts, per packet hash, the lowest-id copy: which route won the race.
+  The page (`ConnectionWebPage.tsx` + `lib/connectionWeb.ts`) derives links from
+  the routes: width is `shareOut` (how often a node picks that hop), opacity is
+  the packet count on a log scale, and colour is the last-hop SNR (grey when
+  none was measured). Every link is dashed and drawn sender-to-receiver, so the
+  `.meshcore-web-link` flow animation in `index.css` reads as direction; its
+  keyframe offset must equal the `LINK_DASH` period or the dashes stutter. The
+  link sheet also shows `shareIn` (of what reaches the downstream node).
+  Selecting a node keeps the whole routes it appears on, hops upstream of it
+  included -- trimming them to the part after the node reduced a last-hop relay
+  to a bare "R3 -> you" and hid where its traffic came from.
+
 ## Node monitoring
 
 A type-agnostic poller (`internal/monitor`) polls monitored contacts on a staggered schedule → `node_metrics` (time-series) + `node_state` (latest snapshot, JSON `metric→value`). Gotchas:
@@ -414,6 +453,8 @@ Every JSON body is capped at 1 MiB (`readJSON`); backup uploads have their own, 
 GET  /api/peers
 DELETE /api/peers/{pubkey}
 GET  /api/packets?limit=N
+GET  /api/connection-web?hours=N                            (routes toward us, see Packet log & Connection Web)
+PUT|DELETE /api/connection-web/pins/{hash}                  { pubkey: hex | null }   (which repeater a hop hash is)
 
 GET  /api/companions
 GET  /api/companions/{name}/contacts

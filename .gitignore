@@ -166,6 +166,9 @@ dist
 # Compiled binary (`go build -o OwlShack .`)
 /OwlShack
 
+# Cross-compiled binaries staged for the Docker build (docker-push.ps1)
+docker/bin/
+
 # Runtime config — holds repeater passwords / secrets. The bot stores config in
 # meshcore.db; a config file is only a one-time import (default-named or -config).
 config.json

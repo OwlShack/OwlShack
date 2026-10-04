@@ -193,6 +193,7 @@ func PruneBackup(ctx context.Context, path string, opts PruneOptions) error {
 		{"DELETE FROM repeater", opts.Repeater},
 		{"DELETE FROM repeater_acl", opts.Repeater},
 		{"DELETE FROM discovered_peers", opts.Peers},
+		{"DELETE FROM hop_pins", opts.Peers}, // a pin names a peer, so it goes with them
 	}
 	for _, s := range steps {
 		if s.skip {

@@ -324,6 +324,23 @@
   }
 }
 
+/* Connection Web links march sender to receiver; the offset must equal LINK_DASH's period or it stutters. */
+.meshcore-web-link {
+  animation: meshcore-link-flow 1.4s linear infinite;
+}
+
+@keyframes meshcore-link-flow {
+  to {
+    stroke-dashoffset: -18;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .meshcore-web-link {
+    animation: none;
+  }
+}
+
 @keyframes slide-in {
   from {
     opacity: 0;

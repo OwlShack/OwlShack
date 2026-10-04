@@ -92,6 +92,34 @@ func wirePacketLogger(mux *node.RadioMux, modem node.Modem, db *store.Store, srv
 	})
 }
 
+// packetPruneLoop prunes at startup and hourly, re-reading the setting each pass so a save needs no reload.
+func packetPruneLoop(ctx context.Context, db *store.Store) {
+	tick := time.NewTicker(time.Hour)
+	defer tick.Stop()
+	for {
+		prunePackets(ctx, db)
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+	}
+}
+
+// prunePackets deletes one batch per writer turn so a long backlog never fills the queue and drops RX writes.
+func prunePackets(ctx context.Context, db *store.Store) {
+	cutoff := time.Now().AddDate(0, 0, -db.Settings.PacketRetentionDays(ctx))
+	for more := true; more && ctx.Err() == nil; {
+		more = false
+		db.WriteSync(func() {
+			var err error
+			if more, err = db.Packets.PruneBatchBefore(ctx, cutoff, 500); err != nil {
+				slog.Warn("packet prune failed", "error", err)
+			}
+		})
+	}
+}
+
 // packetTypes returns (nil, nil) when parsing failed.
 func packetTypes(pkt *meshcore.Packet, parseErr error) (routeType, payloadType *uint8) {
 	if parseErr != nil {

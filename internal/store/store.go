@@ -19,6 +19,7 @@ const writerQueueDepth = 1024
 type Store struct {
 	db             *sql.DB
 	Peers          *PeerRepo
+	HopPins        *HopPinRepo
 	Contacts       *ContactRepo
 	Packets        *PacketRepo
 	Messages       *MessageRepo
@@ -72,8 +73,9 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		db:             db,
 		path:           path,
 		Peers:          &PeerRepo{db: db},
+		HopPins:        &HopPinRepo{db: db},
 		Contacts:       &ContactRepo{db: db},
-		Packets:        &PacketRepo{db: db, maxRows: DefaultMaxPackets},
+		Packets:        &PacketRepo{db: db},
 		Messages:       &MessageRepo{db: db, maxRows: DefaultMaxMessages},
 		Conversations:  &ConversationRepo{db: db},
 		Echoes:         &EchoRepo{db: db},
