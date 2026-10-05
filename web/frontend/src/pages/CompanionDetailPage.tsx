@@ -1908,18 +1908,17 @@ function CompanionChat() {
               </DialogTitle>
             </div>
             <DialogDescription className="font-mono text-xs text-muted-foreground">
-              {modal?.message.sender}
+              <span className="block">{modal?.message.sender}</span>
               {modal?.message.receivedAt && (
-                <>
-                  {" "}
-                  · {formatDateTime(modal.message.receivedAt)}
-                </>
+                <span className="block">
+                  {modal.message.direction === "tx" ? "sent" : "heard"}{" "}
+                  {formatDateTime(modal.message.receivedAt)}
+                </span>
               )}
               {modal && sentByTheirClock(modal.message) && (
-                <>
-                  {" "}
-                  · sent {formatDateTime(modal.message.timestamp)} by their clock
-                </>
+                <span className="block">
+                  sent {formatDateTime(modal.message.timestamp)} by their clock
+                </span>
               )}
             </DialogDescription>
           </DialogHeader>
