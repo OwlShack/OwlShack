@@ -114,14 +114,16 @@ func prunePackets(ctx context.Context, db *store.Store) {
 		return
 	}
 	cutoff := time.Now().AddDate(0, 0, -days)
-	for after := int64(0); ctx.Err() == nil; {
+	const batch = 500
+	for ctx.Err() == nil {
+		var n int64
 		db.WriteSync(func() {
 			var err error
-			if after, err = db.Packets.PruneBatchBefore(ctx, cutoff, after, 500); err != nil {
+			if n, err = db.Packets.PruneBatchBefore(ctx, cutoff, batch); err != nil {
 				slog.Warn("packet prune failed", "error", err)
 			}
 		})
-		if after == 0 {
+		if n < batch {
 			return
 		}
 	}

@@ -58,12 +58,11 @@ func scanContact(s interface{ Scan(...any) error }) (*Contact, error) {
 	var c Contact
 	var metaStr string
 	var feat1, feat2, lastAdvertTS int64
-	var lastSeen sql.NullTime
 	var outPath sql.NullString
 	if err := s.Scan(
 		&c.CompanionID, &c.PeerPubKey, &c.Name, &c.Type, &c.Lat, &c.Lon,
-		&feat1, &feat2, &outPath, &c.OutPathHashSize, &c.PathHashSize, &lastSeen, &lastAdvertTS,
-		&c.AddedAt, &metaStr,
+		&feat1, &feat2, &outPath, &c.OutPathHashSize, &c.PathHashSize, unixMS(&c.LastSeen), &lastAdvertTS,
+		unixMS(&c.AddedAt), &metaStr,
 	); err != nil {
 		return nil, err
 	}
@@ -71,9 +70,6 @@ func scanContact(s interface{ Scan(...any) error }) (*Contact, error) {
 	c.Feat1 = uint16(feat1)
 	c.Feat2 = uint16(feat2)
 	c.LastAdvertTS = uint32(lastAdvertTS)
-	if lastSeen.Valid {
-		c.LastSeen = lastSeen.Time
-	}
 	json.Unmarshal([]byte(metaStr), &c.Metadata)
 	return &c, nil
 }
@@ -85,8 +81,8 @@ type ContactRepo struct {
 func (r *ContactRepo) Add(ctx context.Context, companionID int64, peerPubKey []byte, name, contactType string) error {
 	// A re-add keeps a known name and type, and bytes per hop is set only here, from the advert heard or else the node's own size.
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO companion_contacts (companion_id, peer_pubkey, name, type, path_hash_size)
-		VALUES (?1, ?2, ?3, ?4, COALESCE(
+		INSERT INTO companion_contacts (companion_id, peer_pubkey, name, type, added_at, path_hash_size)
+		VALUES (?1, ?2, ?3, ?4, ?5, COALESCE(
 			(SELECT out_path_hash_size FROM discovered_peers WHERE pubkey = ?2 AND out_path_hash_size BETWEEN 1 AND 3),
 			(SELECT path_hash_size FROM companions WHERE id = ?1 AND path_hash_size BETWEEN 1 AND 3),
 			(SELECT path_hash_size FROM settings WHERE id = 1 AND path_hash_size BETWEEN 1 AND 3),
@@ -94,7 +90,7 @@ func (r *ContactRepo) Add(ctx context.Context, companionID int64, peerPubKey []b
 		ON CONFLICT(companion_id, peer_pubkey) DO UPDATE SET
 			name = CASE WHEN excluded.name <> '' THEN excluded.name ELSE companion_contacts.name END,
 			type = CASE WHEN excluded.type <> '' THEN excluded.type ELSE companion_contacts.type END`,
-		companionID, peerPubKey, name, contactType,
+		companionID, peerPubKey, name, contactType, time.Now().UnixMilli(),
 	)
 	if err != nil {
 		return fmt.Errorf("adding contact: %w", err)
@@ -110,7 +106,7 @@ func (r *ContactRepo) Restore(ctx context.Context, c *Contact) error {
 	}
 	var lastSeen any
 	if !c.LastSeen.IsZero() {
-		lastSeen = c.LastSeen
+		lastSeen = c.LastSeen.UnixMilli()
 	}
 	addedAt := c.AddedAt
 	if addedAt.IsZero() {
@@ -133,7 +129,7 @@ func (r *ContactRepo) Restore(ctx context.Context, c *Contact) error {
 			added_at = excluded.added_at,
 			metadata = excluded.metadata`,
 		c.CompanionID, c.PeerPubKey, c.Name, c.Type, c.Lat, c.Lon, c.Feat1, c.Feat2,
-		c.OutPath, c.OutPathHashSize, max(c.PathHashSize, 1), lastSeen, c.LastAdvertTS, addedAt, string(meta),
+		c.OutPath, c.OutPathHashSize, max(c.PathHashSize, 1), lastSeen, c.LastAdvertTS, addedAt.UnixMilli(), string(meta),
 	)
 	if err != nil {
 		return fmt.Errorf("restoring contact: %w", err)
@@ -161,7 +157,7 @@ func (r *ContactRepo) RefreshFromAdvert(
 		WHERE peer_pubkey = ?`,
 		name, name, contactType, contactType,
 		hasLocation, lat, hasLocation, lon,
-		feat1, feat2, lastSeen, lastAdvertTS,
+		feat1, feat2, lastSeen.UnixMilli(), lastAdvertTS,
 		peerPubKey,
 	)
 	if err != nil {

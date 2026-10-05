@@ -211,17 +211,16 @@ func PruneBackup(ctx context.Context, path string, opts PruneOptions) error {
 		return fmt.Errorf("pruning telemetry_map: %w", err)
 	}
 
-	// DATETIME columns compare against a SQL timestamp; the metrics/neighbour tables store unix seconds.
 	windows := []struct {
 		table, col string
 		days       int
-		unix       bool
+		cutoff     string
 	}{
-		{"packets", "received_at", opts.PacketDays, false},
-		{"messages", "timestamp", opts.MessageDays, false},
-		{"message_echoes", "", opts.MessageDays, false}, // no timestamp; tied to messages
-		{"node_metrics", "ts", opts.MetricDays, true},
-		{"node_neighbors", "ts", opts.MetricDays, true},
+		{"packets", "received_at", opts.PacketDays, sinceMS},
+		{"messages", "timestamp", opts.MessageDays, sinceMS},
+		{"message_echoes", "", opts.MessageDays, ""}, // no timestamp; tied to messages
+		{"node_metrics", "ts", opts.MetricDays, sinceSecs},
+		{"node_neighbors", "ts", opts.MetricDays, sinceSecs},
 	}
 	for _, w := range windows {
 		if w.days == DaysAll {
@@ -233,12 +232,7 @@ func PruneBackup(ctx context.Context, path string, opts PruneOptions) error {
 			}
 			continue
 		}
-		var q string
-		if w.unix {
-			q = fmt.Sprintf("DELETE FROM %s WHERE %s < unixepoch('now', ?)", w.table, w.col)
-		} else {
-			q = fmt.Sprintf("DELETE FROM %s WHERE %s < datetime('now', ?)", w.table, w.col)
-		}
+		q := fmt.Sprintf("DELETE FROM %s WHERE %s < %s", w.table, w.col, w.cutoff)
 		if _, err := db.ExecContext(ctx, q, fmt.Sprintf("-%d days", w.days)); err != nil {
 			return fmt.Errorf("trimming %s: %w", w.table, err)
 		}
@@ -319,7 +313,7 @@ func (s *Store) CountForBackup(ctx context.Context, opts PruneOptions) (*BackupC
 		q := "SELECT count(*) FROM messages WHERE companion_id IN (" + keptIDs + ")"
 		args := append([]any(nil), compArgs...)
 		if opts.MessageDays != DaysAll {
-			q += " AND timestamp >= datetime('now', ?)"
+			q += " AND timestamp >= " + sinceMS
 			args = append(args, fmt.Sprintf("-%d days", opts.MessageDays))
 		}
 		if err := s.db.QueryRowContext(ctx, q, args...).Scan(&out.Messages); err != nil {
@@ -327,10 +321,10 @@ func (s *Store) CountForBackup(ctx context.Context, opts PruneOptions) (*BackupC
 		}
 	}
 
-	if err := s.countWindow(ctx, "packets", "received_at", false, opts.PacketDays, &out.Packets); err != nil {
+	if err := s.countWindow(ctx, "packets", "received_at", sinceMS, opts.PacketDays, &out.Packets); err != nil {
 		return nil, err
 	}
-	if err := s.countWindow(ctx, "node_metrics", "ts", true, opts.MetricDays, &out.Metrics); err != nil {
+	if err := s.countWindow(ctx, "node_metrics", "ts", sinceSecs, opts.MetricDays, &out.Metrics); err != nil {
 		return nil, err
 	}
 	if opts.Peers {
@@ -349,18 +343,20 @@ func (s *Store) CountForBackup(ctx context.Context, opts PruneOptions) (*BackupC
 	return out, nil
 }
 
-func (s *Store) countWindow(ctx context.Context, table, col string, unix bool, days int, dst *int64) error {
+// The cutoffs a backup window compares against: the packet and message times are unix ms, the metrics and neighbours unix seconds.
+const (
+	sinceMS   = "unixepoch('now', ?) * 1000"
+	sinceSecs = "unixepoch('now', ?)"
+)
+
+func (s *Store) countWindow(ctx context.Context, table, col, cutoff string, days int, dst *int64) error {
 	if days == DaysNone {
 		return nil
 	}
 	q := "SELECT count(*) FROM " + table
 	var args []any
 	if days != DaysAll {
-		if unix {
-			q += " WHERE " + col + " >= unixepoch('now', ?)"
-		} else {
-			q += " WHERE " + col + " >= datetime('now', ?)"
-		}
+		q += " WHERE " + col + " >= " + cutoff
 		args = append(args, fmt.Sprintf("-%d days", days))
 	}
 	if err := s.db.QueryRowContext(ctx, q, args...).Scan(dst); err != nil {

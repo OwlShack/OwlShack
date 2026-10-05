@@ -28,6 +28,16 @@ top until tagged.
   larger. Lowering the setting deletes the older packets within the hour, and they cannot be
   recovered.
 
+### Fixed
+
+- **Backups that keep the last N days now cut off at the right time.** The cutoff was out by
+  your time zone's offset from UTC, up to 13 hours in New Zealand, so a backup could hold more or
+  less than the days you picked.
+- **Peers, packets and messages load in every time zone.** In zones whose offset from UTC is not
+  a whole hour and that have no letter abbreviation, including Nepal, Iran, Afghanistan, Sri Lanka,
+  Myanmar and the Chatham Islands, these lists failed to load. Times saved before the upgrade are
+  kept and show correctly.
+
 ## v1.5.0 - 2026-10-01
 
 Baseline `v1.4.2`. Sensors on the Pi, sent over the mesh; bytes per hop and one Path window for

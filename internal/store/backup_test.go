@@ -215,16 +215,16 @@ func seedForPrune(t *testing.T, opts PruneOptions) *sql.DB {
 	}
 	exec(`INSERT INTO companions (id, name, private_key, pubkey) VALUES
 		(1,'keep','aa','k1'), (2,'drop','bb','k2')`)
-	exec(`INSERT INTO companion_contacts (companion_id, peer_pubkey, name) VALUES
-		(1, X'01', 'c-keep'), (2, X'02', 'c-drop')`)
+	exec(`INSERT INTO companion_contacts (companion_id, peer_pubkey, name, added_at) VALUES
+		(1, X'01', 'c-keep', unixepoch() * 1000), (2, X'02', 'c-drop', unixepoch() * 1000)`)
 	exec(`INSERT INTO messages (companion_id, channel, channel_hash, direction, timestamp) VALUES
-		(1,'Public',0,'rx', datetime('now','-1 days')),
-		(1,'Public',0,'rx', datetime('now','-40 days')),
-		(2,'Public',0,'rx', datetime('now','-1 days'))`)
+		(1,'Public',0,'rx', unixepoch('now','-1 days') * 1000),
+		(1,'Public',0,'rx', unixepoch('now','-40 days') * 1000),
+		(2,'Public',0,'rx', unixepoch('now','-1 days') * 1000)`)
 	exec(`INSERT INTO packets (direction, raw, received_at) VALUES
-		('rx','00', datetime('now','-1 days')),
-		('rx','01', datetime('now','-40 days'))`)
-	exec(`INSERT INTO discovered_peers (pubkey, name) VALUES ('p1','peer')`)
+		('rx','00', unixepoch('now','-1 days') * 1000),
+		('rx','01', unixepoch('now','-40 days') * 1000)`)
+	exec(`INSERT INTO discovered_peers (pubkey, name, last_seen) VALUES ('p1','peer', unixepoch() * 1000)`)
 	exec(`INSERT INTO node_metrics (ts, pubkey, metric, value) VALUES
 		(unixepoch('now','-1 days'),'p1','battery',1),
 		(unixepoch('now','-40 days'),'p1','battery',2)`)
@@ -399,6 +399,34 @@ func TestCountForBackup_MatchesSelection(t *testing.T) {
 		if got.Companions != tc.want {
 			t.Errorf("%s: companions = %d, want %d", tc.name, got.Companions, tc.want)
 		}
+	}
+}
+
+// The wizard's counts use the same cutoffs PruneBackup deletes by: an hour either side of the window decides it.
+func TestCountForBackup_DayWindows(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(ctx, filepath.Join(t.TempDir(), "c.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	exec(t, st.db, `INSERT INTO companions (id, name, private_key) VALUES (1,'a','aa')`)
+	exec(t, st.db, `INSERT INTO messages (companion_id, channel, channel_hash, direction, timestamp) VALUES
+		(1,'Public',0,'rx', unixepoch('now','-7 days','+1 hour') * 1000),
+		(1,'Public',0,'rx', unixepoch('now','-7 days','-1 hour') * 1000)`)
+	exec(t, st.db, `INSERT INTO packets (direction, raw, received_at) VALUES
+		('rx','00', unixepoch('now','-7 days','+1 hour') * 1000),
+		('rx','01', unixepoch('now','-7 days','-1 hour') * 1000)`)
+	exec(t, st.db, `INSERT INTO node_metrics (ts, pubkey, metric, value) VALUES
+		(unixepoch('now','-7 days','+1 hour'),'p1','battery',1),
+		(unixepoch('now','-7 days','-1 hour'),'p1','battery',2)`)
+
+	got, err := st.CountForBackup(ctx, PruneOptions{CompanionIDs: []int64{1}, MessageDays: 7, PacketDays: 7, MetricDays: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Messages != 1 || got.Packets != 1 || got.Metrics != 1 {
+		t.Errorf("messages %d, packets %d, metrics %d, want 1 of each inside 7 days", got.Messages, got.Packets, got.Metrics)
 	}
 }
 

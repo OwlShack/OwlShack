@@ -18,6 +18,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // migrationFiles holds one file per user_version, named NNN_what.sql; a shipped file is frozen by migrations.sum.
@@ -107,13 +108,16 @@ func loadMigrations(fsys fs.FS) ([]migration, error) {
 	return out, nil
 }
 
-// apply runs the file without the version bump or the checksum row; 004 also runs a Go step, frozen like the files, for what SQL cannot do.
+// apply runs the file without the version bump or the checksum row; 004 and 024 also run a Go step, frozen like the files, for what SQL cannot do.
 func (m migration) apply(ctx context.Context, db dbExecer) error {
 	if _, err := db.ExecContext(ctx, m.sql); err != nil {
 		return err
 	}
-	if m.version == 4 {
+	switch m.version {
+	case 4:
 		return backfillPacketFields(ctx, db)
+	case 24:
+		return timesToUnixMS(ctx, db)
 	}
 	return nil
 }
@@ -394,4 +398,63 @@ func backfillPacketFields(ctx context.Context, tx dbExecer) error {
 		}
 	}
 	return nil
+}
+
+// timesToUnixMS rewrites each time Go stored as host-zone text, which the driver parses on read, as UTC unix milliseconds.
+func timesToUnixMS(ctx context.Context, tx dbExecer) error {
+	for _, c := range []struct{ table, col string }{
+		{"packets", "received_at"},
+		{"discovered_peers", "last_seen"},
+		{"companion_contacts", "last_seen"},
+		{"companion_contacts", "added_at"},
+		{"messages", "timestamp"},
+		{"message_echoes", "received_at"},
+	} {
+		rows, err := tx.QueryContext(ctx, "SELECT rowid, "+c.col+" FROM "+c.table)
+		if err != nil {
+			return fmt.Errorf("reading %s.%s: %w", c.table, c.col, err)
+		}
+		type row struct{ id, ms int64 }
+		var todo []row
+		for rows.Next() {
+			var id int64
+			var v any
+			if err := rows.Scan(&id, &v); err != nil {
+				rows.Close()
+				return fmt.Errorf("scanning %s.%s: %w", c.table, c.col, err)
+			}
+			if s, ok := v.(string); ok {
+				if t, err := parseTimeString(s); err == nil {
+					v = t
+				}
+			}
+			switch v := v.(type) {
+			case time.Time:
+				todo = append(todo, row{id, v.UnixMilli()})
+			case int64, nil:
+			default:
+				rows.Close()
+				return fmt.Errorf("%s.%s row %d holds %T %v, not a time", c.table, c.col, id, v, v)
+			}
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("iterating %s.%s: %w", c.table, c.col, err)
+		}
+		for _, r := range todo {
+			if _, err := tx.ExecContext(ctx, "UPDATE "+c.table+" SET "+c.col+" = ? WHERE rowid = ?", r.ms, r.id); err != nil {
+				return fmt.Errorf("rewriting %s.%s row %d: %w", c.table, c.col, r.id, err)
+			}
+		}
+	}
+	return nil
+}
+
+// parseTimeString reads Go's time.String() by its numeric offset, as the driver cannot parse a zone named by digits, such as Kathmandu's "+0545 +0545".
+func parseTimeString(s string) (time.Time, error) {
+	f := strings.Fields(s)
+	if len(f) < 3 {
+		return time.Time{}, fmt.Errorf("%q is not a Go time", s)
+	}
+	return time.Parse("2006-01-02 15:04:05.999999999 -0700", f[0]+" "+f[1]+" "+f[2])
 }

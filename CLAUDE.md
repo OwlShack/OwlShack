@@ -125,6 +125,17 @@ the DB in rollback-journal mode with no busy timeout. Under NORMAL a commit is
 only synced at a checkpoint, so `WriteSync` checkpoints after its closure: an
 HTTP save is on disk when it returns, and the RX path's `WriteAsync` is not.
 
+**Never hand the SQLite driver a `time.Time`.** modernc stores it as host-zone
+`String()` text, which SQL compares wrongly across zones. New time columns are
+UTC unix milliseconds (`int64`): pass `t.UnixMilli()` and scan with
+`unixMS(&t)`, and add the column to `TestTimeColumnsHoldUnixMS`. The metrics,
+neighbour, node-state, signal-test and repeater-ACL times are older unix-second
+columns and stay so. The millisecond columns are still declared `DATETIME`
+(NUMERIC affinity, so an integer stays one) and their `DEFAULT
+CURRENT_TIMESTAMP` is dead, as every insert supplies the time. Never
+`int32`/`uint32` for a stored time; the `uint32` timestamps in `node` and
+`client` are the firmware's wire format.
+
 **SNR is real dB end-to-end** (`snr REAL` / `*float64` / JSON number); RSSI is
 raw `int8` dBm. The wire is quarter-dB (x4) and meshcore-go converts at ingest;
 `meshcore.PathSNRdB(b)` decodes raw trace path bytes. No consumer divides by 4.
