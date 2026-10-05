@@ -48,6 +48,9 @@ top until tagged.
 - **Your observer no longer flickers offline every 8 minutes.** Renewing a broker's login made
   the broker announce the observer as offline, and could lose the packets sent at that moment, so
   maps could show it offline for up to 5 minutes at a time. Renewing is now seamless.
+- **Packets lost while a broker reconnects count as dropped.** They were counted as published,
+  though the broker never got them, so the MQTT page looked healthy through an outage. A status
+  update during a reconnect also held up the packets behind it for 5 seconds; it no longer does.
 
 ## v1.5.0 - 2026-10-01
 

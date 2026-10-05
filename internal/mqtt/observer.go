@@ -397,8 +397,8 @@ func (o *Observer) doPublish(bc *brokerClient, job publishJob) {
 	bc.refreshMu.Lock()
 	client := bc.currentClient()
 	bc.refreshMu.Unlock()
-	if client == nil || !client.IsConnected() {
-		// Publishing to a disconnected client would block for the full publishWaitTimeout per job and stall the worker.
+	if client == nil || !client.IsConnectionOpen() {
+		// While reconnecting paho discards a QoS 0 publish as sent and holds a QoS 1 one for the full publishWaitTimeout, so count both as dropped.
 		bc.dropped.Add(1)
 		return
 	}
