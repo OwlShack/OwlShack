@@ -373,8 +373,8 @@ without hand-copying `meshcore.db`. UI is `BackupWizard` (opened from
   the packet log costs before building the file. `Bytes` is the live DB size,
   i.e. an upper bound.
 - **Day windows** are `-1` all, `0` none, or N days (`store.DaysAll` /
-  `DaysNone`). They apply to `packets.received_at` and `messages.timestamp`
-  (unix ms) and `node_metrics.ts` / `node_neighbors.ts` (unix seconds), hence
+  `DaysNone`). They apply to `packets.received_at` and `messages.received_at`
+  (unix ms, our clock: a sender's `timestamp` can be years out) and `node_metrics.ts` / `node_neighbors.ts` (unix seconds), hence
   the `sinceMS` and `sinceSecs` cutoffs in `backup.go`.
 - **Import sniffs the upload**: the `SQLite format 3\0` magic means a backup
   (staged); anything else goes through `importConfigFile`, so an operator can

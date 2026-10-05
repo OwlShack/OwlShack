@@ -66,14 +66,14 @@ func (r *ConversationRepo) channelConversation(ctx context.Context, companionID 
 
 	var lastID sql.NullInt64
 	var text, sender, direction sql.NullString
-	var ts time.Time
+	var ts, received time.Time
 	err := r.db.QueryRowContext(ctx, `
-		SELECT id, text, sender, direction, timestamp
+		SELECT id, text, sender, direction, timestamp, received_at
 		FROM messages
 		WHERE companion_id = ? AND channel = ?
 		ORDER BY id DESC LIMIT 1`,
 		companionID, channel,
-	).Scan(&lastID, &text, &sender, &direction, unixMS(&ts))
+	).Scan(&lastID, &text, &sender, &direction, unixMS(&ts), unixMS(&received))
 
 	if err == nil && text.Valid {
 		conv.LastMessage = &ConversationMessage{
@@ -82,7 +82,7 @@ func (r *ConversationRepo) channelConversation(ctx context.Context, companionID 
 			Direction: direction.String,
 			Timestamp: ts,
 		}
-		conv.LastActive = ts
+		conv.LastActive = received
 		conv.LastMessageID = lastID.Int64
 	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("querying last channel message: %w", err)
@@ -122,14 +122,14 @@ func (r *ConversationRepo) contactConversation(ctx context.Context, companionID 
 
 	var lastID sql.NullInt64
 	var text, sender, direction sql.NullString
-	var ts time.Time
+	var ts, received time.Time
 	err := r.db.QueryRowContext(ctx, `
-		SELECT id, text, sender, direction, timestamp
+		SELECT id, text, sender, direction, timestamp, received_at
 		FROM messages
 		WHERE companion_id = ? AND channel = ?
 		ORDER BY id DESC LIMIT 1`,
 		companionID, channelKey,
-	).Scan(&lastID, &text, &sender, &direction, unixMS(&ts))
+	).Scan(&lastID, &text, &sender, &direction, unixMS(&ts), unixMS(&received))
 
 	if err == nil && text.Valid {
 		conv.LastMessage = &ConversationMessage{
@@ -138,7 +138,7 @@ func (r *ConversationRepo) contactConversation(ctx context.Context, companionID 
 			Direction: direction.String,
 			Timestamp: ts,
 		}
-		conv.LastActive = ts
+		conv.LastActive = received
 		conv.LastMessageID = lastID.Int64
 	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("querying last contact message: %w", err)

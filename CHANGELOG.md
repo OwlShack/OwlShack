@@ -30,6 +30,11 @@ top until tagged.
 
 ### Fixed
 
+- **Messages show when you received them.** Channel messages and room posts showed the time
+  by the sender's clock, which can be years out, so a message that had just arrived could show a
+  date long past. They now show when they arrived, and a message's Reception paths add the sender's
+  own time when it is more than a minute out. Backups that keep the last N days of messages now
+  go by when you received them too.
 - **Backups that keep the last N days now cut off at the right time.** The cutoff was out by
   your time zone's offset from UTC, up to 13 hours in New Zealand, so a backup could hold more or
   less than the days you picked.

@@ -58,6 +58,7 @@ func TestMessageRepo_InsertRoundTrip(t *testing.T) {
 		Text:         "hello mesh",
 		Direction:    "rx",
 		Timestamp:    ts,
+		ReceivedAt:   ts,
 		SNR:          f64(7.25),
 		RSSI:         i8(-95),
 		PathHashes:   []byte{0x01, 0x02, 0x03},
@@ -127,7 +128,7 @@ func TestMessageRepo_NullableFields(t *testing.T) {
 	st := newTestStore(t)
 	cid := mkCompanion(t, st, "alpha")
 
-	m := &Message{CompanionID: cid, Channel: "public", Direction: "tx", Timestamp: time.Now()}
+	m := &Message{CompanionID: cid, Channel: "public", Direction: "tx", Timestamp: time.Now(), ReceivedAt: time.Now()}
 	if err := st.Messages.Insert(t.Context(), m); err != nil {
 		t.Fatalf("Insert: %v", err)
 	}
@@ -167,7 +168,7 @@ func insertN(t *testing.T, st *Store, cid int64, channel, direction string, n in
 	t.Helper()
 	ids := make([]int64, n)
 	for i := 0; i < n; i++ {
-		m := &Message{CompanionID: cid, Channel: channel, Direction: direction, Timestamp: time.Now()}
+		m := &Message{CompanionID: cid, Channel: channel, Direction: direction, Timestamp: time.Now(), ReceivedAt: time.Now()}
 		if err := st.Messages.Insert(t.Context(), m); err != nil {
 			t.Fatalf("Insert #%d: %v", i, err)
 		}
@@ -262,7 +263,7 @@ func TestMessageRepo_UpdateStatus(t *testing.T) {
 	t.Parallel()
 	st := newTestStore(t)
 	cid := mkCompanion(t, st, "alpha")
-	m := &Message{CompanionID: cid, Channel: "public", Direction: "tx", Timestamp: time.Now()}
+	m := &Message{CompanionID: cid, Channel: "public", Direction: "tx", Timestamp: time.Now(), ReceivedAt: time.Now()}
 	if err := st.Messages.Insert(t.Context(), m); err != nil {
 		t.Fatalf("Insert: %v", err)
 	}
@@ -282,7 +283,7 @@ func TestMessageRepo_IncrementRepeatCount(t *testing.T) {
 	t.Parallel()
 	st := newTestStore(t)
 	cid := mkCompanion(t, st, "alpha")
-	m := &Message{CompanionID: cid, Channel: "public", Direction: "tx", Timestamp: time.Now()}
+	m := &Message{CompanionID: cid, Channel: "public", Direction: "tx", Timestamp: time.Now(), ReceivedAt: time.Now()}
 	if err := st.Messages.Insert(t.Context(), m); err != nil {
 		t.Fatalf("Insert: %v", err)
 	}
@@ -901,7 +902,7 @@ func TestHopPinRepo_NonePinIsPresent(t *testing.T) {
 // Bump wantVersion whenever a migration file is added.
 func TestStore_MigrateUserVersion(t *testing.T) {
 	t.Parallel()
-	const wantVersion = 24 // one per file in migrations/
+	const wantVersion = 25 // one per file in migrations/
 	st := newTestStore(t)
 	var v int
 	if err := st.db.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&v); err != nil {
@@ -916,7 +917,7 @@ func TestStore_MigrateUserVersion(t *testing.T) {
 func TestStore_ForeignKeysEnforced(t *testing.T) {
 	t.Parallel()
 	st := newTestStore(t)
-	m := &Message{CompanionID: 9999, Channel: "x", Direction: "rx", Timestamp: time.Now()}
+	m := &Message{CompanionID: 9999, Channel: "x", Direction: "rx", Timestamp: time.Now(), ReceivedAt: time.Now()}
 	err := st.Messages.Insert(t.Context(), m)
 	if err == nil {
 		t.Fatalf("Insert with dangling companion_id = nil error, want FK violation")

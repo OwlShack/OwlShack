@@ -217,10 +217,10 @@ func seedForPrune(t *testing.T, opts PruneOptions) *sql.DB {
 		(1,'keep','aa','k1'), (2,'drop','bb','k2')`)
 	exec(`INSERT INTO companion_contacts (companion_id, peer_pubkey, name, added_at) VALUES
 		(1, X'01', 'c-keep', unixepoch() * 1000), (2, X'02', 'c-drop', unixepoch() * 1000)`)
-	exec(`INSERT INTO messages (companion_id, channel, channel_hash, direction, timestamp) VALUES
-		(1,'Public',0,'rx', unixepoch('now','-1 days') * 1000),
-		(1,'Public',0,'rx', unixepoch('now','-40 days') * 1000),
-		(2,'Public',0,'rx', unixepoch('now','-1 days') * 1000)`)
+	exec(`INSERT INTO messages (companion_id, channel, channel_hash, direction, timestamp, received_at) VALUES
+		(1,'Public',0,'rx', unixepoch('now','-1 days') * 1000, unixepoch('now','-1 days') * 1000),
+		(1,'Public',0,'rx', unixepoch('now','-40 days') * 1000, unixepoch('now','-40 days') * 1000),
+		(2,'Public',0,'rx', unixepoch('now','-1 days') * 1000, unixepoch('now','-1 days') * 1000)`)
 	exec(`INSERT INTO packets (direction, raw, received_at) VALUES
 		('rx','00', unixepoch('now','-1 days') * 1000),
 		('rx','01', unixepoch('now','-40 days') * 1000)`)
@@ -411,9 +411,9 @@ func TestCountForBackup_DayWindows(t *testing.T) {
 	}
 	defer st.Close()
 	exec(t, st.db, `INSERT INTO companions (id, name, private_key) VALUES (1,'a','aa')`)
-	exec(t, st.db, `INSERT INTO messages (companion_id, channel, channel_hash, direction, timestamp) VALUES
-		(1,'Public',0,'rx', unixepoch('now','-7 days','+1 hour') * 1000),
-		(1,'Public',0,'rx', unixepoch('now','-7 days','-1 hour') * 1000)`)
+	exec(t, st.db, `INSERT INTO messages (companion_id, channel, channel_hash, direction, timestamp, received_at) VALUES
+		(1,'Public',0,'rx', unixepoch('now','-7 days','+1 hour') * 1000, unixepoch('now','-7 days','+1 hour') * 1000),
+		(1,'Public',0,'rx', unixepoch('now','-7 days','-1 hour') * 1000, unixepoch('now','-7 days','-1 hour') * 1000)`)
 	exec(t, st.db, `INSERT INTO packets (direction, raw, received_at) VALUES
 		('rx','00', unixepoch('now','-7 days','+1 hour') * 1000),
 		('rx','01', unixepoch('now','-7 days','-1 hour') * 1000)`)

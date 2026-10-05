@@ -37,6 +37,7 @@ func (c *Companion) sendGroupReply(ch *meshcore.ChannelEntry, text string, hashS
 		Text:      text,
 	}
 
+	now := time.Now()
 	msg := &store.Message{
 		CompanionID: c.cfg.ID,
 		Channel:     ch.Name,
@@ -44,7 +45,8 @@ func (c *Companion) sendGroupReply(ch *meshcore.ChannelEntry, text string, hashS
 		Sender:      c.cfg.Name,
 		Text:        text,
 		Direction:   "tx",
-		Timestamp:   time.Now(),
+		Timestamp:   now,
+		ReceivedAt:  now,
 	}
 
 	c.store.WriteSync(func() {
@@ -64,6 +66,7 @@ func (c *Companion) sendGroupReply(ch *meshcore.ChannelEntry, text string, hashS
 			"text":        text,
 			"direction":   "tx",
 			"timestamp":   msg.Timestamp.UTC().Format(time.RFC3339),
+			"receivedAt":  msg.ReceivedAt.UTC().Format(time.RFC3339),
 			"id":          msgID,
 		})
 	}
@@ -154,6 +157,7 @@ func (c *Companion) sendDM(pubkeyHex, text string, fallbackHashSize uint8, ackTi
 	channelKey := "dm:" + pubkeyHex
 	statusSending := "sending"
 
+	now := time.Now()
 	msg := &store.Message{
 		CompanionID: c.cfg.ID,
 		Channel:     channelKey,
@@ -161,7 +165,8 @@ func (c *Companion) sendDM(pubkeyHex, text string, fallbackHashSize uint8, ackTi
 		Sender:      c.cfg.Name,
 		Text:        text,
 		Direction:   "tx",
-		Timestamp:   time.Now(),
+		Timestamp:   now,
+		ReceivedAt:  now,
 		Status:      &statusSending,
 	}
 
@@ -180,6 +185,7 @@ func (c *Companion) sendDM(pubkeyHex, text string, fallbackHashSize uint8, ackTi
 			"text":        text,
 			"direction":   "tx",
 			"timestamp":   msg.Timestamp.UTC().Format(time.RFC3339),
+			"receivedAt":  msg.ReceivedAt.UTC().Format(time.RFC3339),
 			"id":          msg.ID,
 			"status":      "sending",
 		})
