@@ -29,6 +29,8 @@ func TestConnectionWeb_Builder(t *testing.T) {
 	}
 	near := append([]byte{0x55, 0x01}, webKey(0)[2:]...)
 	far := append([]byte{0x55, 0x02}, webKey(0)[2:]...)
+	// twin shares our repeater's 1-byte hash but is somebody else's.
+	twin := append([]byte{0x99, 0x01}, webKey(0)[2:]...)
 	peers := []store.Peer{
 		rep(webKey(0x22), "R2", -41_100_000, 174_100_000),
 		rep(webKey(0x33), "R3", -41_200_000, 174_000_000),
@@ -37,6 +39,7 @@ func TestConnectionWeb_Builder(t *testing.T) {
 		{PubKey: far, Name: "far", Type: "REPEATER", Lat: -45_000_000, Lon: 170_000_000, LastSeen: time.Now()},
 		rep(near, "near", -41_010_000, 174_010_000),
 		{PubKey: webKey(0x66), Name: "phone", Type: "CHAT"},
+		rep(twin, "twin", -41_050_000, 174_050_000),
 	}
 	self := &webLatLon{Lat: -41, Lon: 174}
 	relay := webKey(0x99)
@@ -47,7 +50,9 @@ func TestConnectionWeb_Builder(t *testing.T) {
 	flood, direct := meshcore.RouteTypeFlood, meshcore.RouteTypeDirect
 	advert, grp, trace := meshcore.PayloadTypeAdvert, meshcore.PayloadTypeGrpTxt, meshcore.PayloadTypeTrace
 
-	b := newWebBuilder(peers, self, relay, nil)
+	// We relayed p8 and started p11.
+	sent := map[string]bool{"p8": false, "p11": true}
+	b := newWebBuilder(peers, self, relay, nil, sent)
 	for _, rec := range []*store.PacketRecord{
 		// p1 heard twice: first over R2, then over R3. p2 and p3 only over R2.
 		webPacket(1, "p1", flood, advert, "rx", advertFromR4, 0x22),
@@ -60,8 +65,12 @@ func TestConnectionWeb_Builder(t *testing.T) {
 		webPacket(6, "p5", direct, grp, "rx", text, 0x22),
 		webPacket(7, "p6", flood, trace, "rx", text, 0x22),
 		webPacket(8, "p7", flood, grp, "tx", text, 0x22),
-		// Our own relay heard back.
+		// Our own relay heard back: our hash is on the path and we sent p8.
 		webPacket(9, "p8", flood, grp, "rx", text, 0x22, 0x99, 0x33),
+		// Our hash on the path but we never sent p10: twin relayed it.
+		webPacket(11, "p10", flood, grp, "rx", text, 0x99),
+		// Our own message heard back through R3: hidden unless asked for.
+		webPacket(12, "p11", flood, grp, "rx", text, 0x33),
 		// Zero hops and no identifiable source: nothing to draw.
 		webPacket(10, "p9", flood, grp, "rx", text),
 	} {
@@ -70,7 +79,7 @@ func TestConnectionWeb_Builder(t *testing.T) {
 	out := b.result()
 
 	r2, r3, r4 := hex.EncodeToString(webKey(0x22)), hex.EncodeToString(webKey(0x33)), hex.EncodeToString(webKey(0x44))
-	nearID := hex.EncodeToString(near)
+	nearID, twinID := hex.EncodeToString(near), hex.EncodeToString(twin)
 	chains := map[string]webChainJSON{}
 	for _, c := range out.Chains {
 		chains[strings.Join(c.Nodes, ">")] = c
@@ -79,6 +88,7 @@ func TestConnectionWeb_Builder(t *testing.T) {
 		r4 + ">" + r2 + ">self":    {3, 3},
 		r4 + ">" + r3 + ">self":    {1, 0},
 		"h:66>" + nearID + ">self": {1, 1},
+		twinID + ">self":           {1, 1},
 	}
 	if len(chains) != len(want) {
 		t.Errorf("got %d chains %v, want %d", len(chains), keys(chains), len(want))
@@ -113,9 +123,16 @@ func TestConnectionWeb_Builder(t *testing.T) {
 		t.Error("a hash matching only a CHAT node should stay an unresolved h:66 node")
 	}
 
+	own := newWebBuilder(peers, self, relay, nil, sent)
+	own.ownEchoes = true
+	own.add(webPacket(12, "p11", flood, grp, "rx", text, 0x33))
+	if out := own.result(); len(out.Chains) != 1 || strings.Join(out.Chains[0].Nodes, ">") != r3+">self" {
+		t.Errorf("ownEchoes: got %v, want our own message as one R3 route", out.Chains)
+	}
+
 	// The operator overrides the distance pick with far, and says no known repeater is 33.
 	farID := hex.EncodeToString(far)
-	pinned := newWebBuilder(peers, self, relay, map[string][]byte{"55": far, "33": nil})
+	pinned := newWebBuilder(peers, self, relay, map[string][]byte{"55": far, "33": nil}, nil)
 	pinned.add(webPacket(2, "p1", flood, advert, "rx", advertFromR4, 0x33))
 	pinned.add(webPacket(5, "p4", flood, grp, "rx", text, 0x66, 0x55))
 	out = pinned.result()

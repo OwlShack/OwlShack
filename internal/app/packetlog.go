@@ -108,15 +108,22 @@ func packetPruneLoop(ctx context.Context, db *store.Store) {
 
 // prunePackets deletes one batch per writer turn so a long backlog never fills the queue and drops RX writes.
 func prunePackets(ctx context.Context, db *store.Store) {
-	cutoff := time.Now().AddDate(0, 0, -db.Settings.PacketRetentionDays(ctx))
-	for more := true; more && ctx.Err() == nil; {
-		more = false
+	days, err := db.Settings.PacketRetentionDays(ctx)
+	if err != nil {
+		slog.Warn("packet prune skipped", "error", err)
+		return
+	}
+	cutoff := time.Now().AddDate(0, 0, -days)
+	for after := int64(0); ctx.Err() == nil; {
 		db.WriteSync(func() {
 			var err error
-			if more, err = db.Packets.PruneBatchBefore(ctx, cutoff, 500); err != nil {
+			if after, err = db.Packets.PruneBatchBefore(ctx, cutoff, after, 500); err != nil {
 				slog.Warn("packet prune failed", "error", err)
 			}
 		})
+		if after == 0 {
+			return
+		}
 	}
 }
 

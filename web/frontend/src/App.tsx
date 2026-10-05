@@ -13,11 +13,6 @@ const CompanionsPage = lazy(() =>
 const MapPage = lazy(() =>
   import("@/pages/MapPage").then((m) => ({ default: m.MapPage })),
 );
-const ConnectionWebPage = lazy(() =>
-  import("@/pages/ConnectionWebPage").then((m) => ({
-    default: m.ConnectionWebPage,
-  })),
-);
 const PacketsPage = lazy(() =>
   import("@/pages/PacketsPage").then((m) => ({ default: m.PacketsPage })),
 );
@@ -135,7 +130,6 @@ export function App() {
           <Route path="/" element={<DashboardPage />} />
           <Route path="/peers" element={<PeersPage />} />
           <Route path="/map" element={<MapPage />} />
-          <Route path="/connection-web" element={<ConnectionWebPage />} />
           <Route path="/packets" element={<PacketsPage />} />
           <Route path="/traces" element={<TracesPage />} />
           <Route path="/monitoring" element={<MonitoringPage />} />

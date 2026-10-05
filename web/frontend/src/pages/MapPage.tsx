@@ -29,6 +29,12 @@ import { deletePeers, deletedPeersMessage } from "@/lib/peerApi";
 import { peerLatLon, useThemeTiles, type BaseLayer } from "@/lib/leaflet";
 import { pathEnds, resolveHops } from "@/lib/linkPath";
 import { useOwnPosition } from "@/hooks/useOwnPosition";
+import { useConnectionWeb } from "@/hooks/useConnectionWeb";
+import {
+  ConnectionControls,
+  ConnectionLists,
+  ConnectionSheet,
+} from "@/components/ConnectionWeb";
 import { drawLink, LINK_STAGGER } from "@/lib/mapLinks";
 import { cn } from "@/lib/utils";
 
@@ -154,9 +160,8 @@ export function MapPage() {
   // Bumped on zoom so the links redraw: whether a label fits depends on the current scale.
   const [zoomTick, setZoomTick] = useState(0);
 
-  const handleMessage = useCallback(
-    (topic: string, data: unknown) => {
-      if (topic !== "peers") return;
+  const handlePeerMessage = useCallback(
+    (data: unknown) => {
       if (isPeerDelete(data)) {
         const gone = new Set(data.pubkeys.map((k) => k.toLowerCase()));
         setPeers((prev) =>
@@ -176,8 +181,6 @@ export function MapPage() {
     },
     [setPeers],
   );
-
-  useWebSocket(["peers"], handleMessage);
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -204,6 +207,38 @@ export function MapPage() {
       fittedRef.current = false;
     };
   }, []);
+
+  // Connections mode draws routes from the packet log instead of peers; in the URL so a reload or link keeps it.
+  const connections = searchParams.get("mode") === "connections";
+  const ownEchoes = searchParams.get("own") === "1";
+  // Called after the map's creation effect, so the layer it adds finds the map on a deep-linked first render.
+  const cw = useConnectionWeb(connections, ownEchoes, mapRef);
+
+  const setMode = (on: boolean) => {
+    const next = new URLSearchParams(searchParams);
+    // A path or pin belongs to the peer view; carrying it over would draw it under the routes.
+    for (const k of ["path", "hs", "origin", "dir", "route", "lat", "lon", "own"]) next.delete(k);
+    if (on) next.set("mode", "connections");
+    else next.delete("mode");
+    fittedRef.current = false;
+    setSearchParams(next, { replace: true });
+  };
+  const setOwnEchoes = (on: boolean) => {
+    const next = new URLSearchParams(searchParams);
+    if (on) next.set("own", "1");
+    else next.delete("own");
+    setSearchParams(next, { replace: true });
+  };
+
+  const { onPacket } = cw;
+  const handleMessage = useCallback(
+    (topic: string, data: unknown) => {
+      if (topic === "peers") handlePeerMessage(data);
+      else if (topic === "packets") onPacket();
+    },
+    [handlePeerMessage, onPacket],
+  );
+  useWebSocket(connections ? ["peers", "packets"] : ["peers"], handleMessage);
 
   const [base, setBase] = useState<BaseLayer>(storedBase);
   useThemeTiles(mapRef, tileLayerRef, base);
@@ -255,7 +290,7 @@ export function MapPage() {
   // the map exactly as it was.
   const activePath = useMemo(() => {
     const hex = searchParams.get("path");
-    if (!hex) return null;
+    if (!hex || connections) return null;
     return {
       hex,
       hashSize: Number(searchParams.get("hs")) || 1,
@@ -263,7 +298,7 @@ export function MapPage() {
       direction: searchParams.get("dir") ?? undefined,
       route: searchParams.get("route") ?? undefined,
     };
-  }, [searchParams]);
+  }, [searchParams, connections]);
 
   // Resolves the path to map nodes once: the dashed runs, which peers to keep plotted, and the
   // chip's label. A hop we cannot place ends the run instead of bridging its neighbours — a leg
@@ -347,9 +382,10 @@ export function MapPage() {
   // Showing a path drops every peer that is not on it — the point of plotting one is to read it,
   // and 300 unrelated dots is what made that hard.
   const plotted = useMemo(() => {
+    if (connections) return NO_PEERS;
     const byType = located.filter((p) => !hidden.has(p.type));
     return pathView ? byType.filter((p) => pathView.nodes.has(p.pubkey)) : byType;
-  }, [located, hidden, pathView]);
+  }, [located, hidden, pathView, connections]);
 
   const [confirmClear, setConfirmClear] = useState(false);
   const [clearing, setClearing] = useState(false);
@@ -415,7 +451,7 @@ export function MapPage() {
     const layer = linksLayerRef.current;
     if (!map || !layer) return;
     layer.clearLayers();
-    if (!showLinks || !links) return;
+    if (!showLinks || !links || connections) return;
 
     links.forEach((l, i) => {
       drawLink(
@@ -428,7 +464,7 @@ export function MapPage() {
         LINK_STAGGER[i % LINK_STAGGER.length],
       );
     });
-  }, [links, showLinks, zoomTick]);
+  }, [links, showLinks, zoomTick, connections]);
 
 
   const toggleType = useCallback((type: string) => {
@@ -452,109 +488,137 @@ export function MapPage() {
         title="Map"
         meta={
           <span className="font-mono text-sm text-muted-foreground tabular-nums">
-            {plotted.length}/{peers.length} with location
+            {connections
+              ? `${cw.totalObservations} packets · ${cw.chains.length} routes`
+              : `${plotted.length}/${peers.length} with location`}
           </span>
         }
         actions={
-          <HeaderButton icon={RefreshCw} busy={loading} onClick={reload}>
-            {loading ? "refreshing" : "refresh"}
+          <HeaderButton
+            icon={RefreshCw}
+            busy={connections ? cw.loading : loading}
+            onClick={connections ? cw.reload : reload}
+          >
+            {(connections ? cw.loading : loading) ? "refreshing" : "refresh"}
           </HeaderButton>
         }
       />
 
       {error && <LoadErrorAlert message={error} onRetry={reload} />}
+      {connections && cw.error && (
+        <LoadErrorAlert message={cw.error} onRetry={cw.reload} />
+      )}
+      {connections && cw.web && !cw.web.self && (
+        <p className="panel px-4 py-3 font-mono text-xs text-muted-foreground">
+          Set a position on your repeater or companion. The map then draws the
+          links into you.
+        </p>
+      )}
 
       <section className="panel overflow-hidden">
         <div className="flex flex-wrap items-center gap-2 px-4 py-3 border-b border-border">
-          <span className="label-overline mr-2">Filter</span>
-          <FilterMenu
-            hidden={hidden}
-            counts={typeCounts}
-            onToggleType={toggleType}
-            showLinks={showLinks}
-            onToggleLinks={() => setShowLinks((v) => !v)}
-          />
-          {TYPE_FILTERS.map((t) => {
-            const isHidden = hidden.has(t);
-            const color = PEER_TYPE_HEX[t] || PEER_TYPE_HEX.NONE;
-            const count = typeCounts[t] || 0;
-            return (
+          <ModeSwitch connections={connections} onChange={setMode} />
+          {connections ? (
+            <ConnectionControls
+              cw={cw}
+              ownEchoes={ownEchoes}
+              onOwnEchoes={setOwnEchoes}
+            />
+          ) : (
+            <>
+              <span className="flex items-center gap-2">
+                <span className="label-overline mr-2">Filter</span>
+                <FilterMenu
+                  hidden={hidden}
+                  counts={typeCounts}
+                  onToggleType={toggleType}
+                  showLinks={showLinks}
+                  onToggleLinks={() => setShowLinks((v) => !v)}
+                />
+              </span>
+              {TYPE_FILTERS.map((t) => {
+                const isHidden = hidden.has(t);
+                const color = PEER_TYPE_HEX[t] || PEER_TYPE_HEX.NONE;
+                const count = typeCounts[t] || 0;
+                return (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => toggleType(t)}
+                    className={cn(
+                      "hidden sm:inline-flex items-center gap-1.5 px-2 py-1 border border-border bg-card font-mono text-[10px] uppercase tracking-[0.12em] transition-all hover:border-foreground/40",
+                      isHidden && "opacity-40 line-through",
+                    )}
+                  >
+                    <span
+                      className="size-2 rounded-full"
+                      style={{ background: color }}
+                      aria-hidden
+                    />
+                    {t}
+                    <span className="tabular-nums text-muted-foreground/70">
+                      {count}
+                    </span>
+                  </button>
+                );
+              })}
               <button
-                key={t}
                 type="button"
-                onClick={() => toggleType(t)}
+                onClick={() => setShowLinks((v) => !v)}
                 className={cn(
-                  "hidden sm:inline-flex items-center gap-1.5 px-2 py-1 border border-border bg-card font-mono text-[10px] uppercase tracking-[0.12em] transition-all hover:border-foreground/40",
-                  isHidden && "opacity-40 line-through",
+                  "ml-1 hidden sm:inline-flex items-center gap-1.5 border border-border bg-card px-2 py-1 pl-3 font-mono text-[10px] uppercase tracking-[0.12em] transition-all hover:border-foreground/40 border-l-2",
+                  showLinks ? "border-primary/60 text-primary" : "text-muted-foreground",
                 )}
               >
-                <span
-                  className="size-2 rounded-full"
-                  style={{ background: color }}
-                  aria-hidden
-                />
-                {t}
-                <span className="tabular-nums text-muted-foreground/70">
-                  {count}
-                </span>
+                links
               </button>
-            );
-          })}
-          <button
-            type="button"
-            onClick={() => setShowLinks((v) => !v)}
-            className={cn(
-              "ml-1 hidden sm:inline-flex items-center gap-1.5 border border-border bg-card px-2 py-1 pl-3 font-mono text-[10px] uppercase tracking-[0.12em] transition-all hover:border-foreground/40 border-l-2",
-              showLinks ? "border-primary/60 text-primary" : "text-muted-foreground",
-            )}
-          >
-            links
-          </button>
-          {pathView && (
-            <button
-              type="button"
-              onClick={clearPath}
-              className="inline-flex items-center gap-1.5 border border-primary/60 bg-card px-2 py-1 font-mono text-[10px] uppercase tracking-[0.12em] text-primary transition-all hover:border-primary"
-            >
-              <Route className="size-3" />
-              path: {pathView.label}
-              <X className="size-3" />
-            </button>
-          )}
-          {focus && (
-            <button
-              type="button"
-              onClick={clearPin}
-              className="inline-flex items-center gap-1.5 border border-primary/60 bg-card px-2 py-1 font-mono text-[10px] uppercase tracking-[0.12em] text-primary transition-all hover:border-primary"
-            >
-              <MapPin className="size-3" />
-              pin: {focus.lat}, {focus.lon}
-              <X className="size-3" />
-            </button>
-          )}
-          <div className="ml-auto flex items-center gap-3">
-            {plotted.length > 0 &&
-              (clearing ? (
-                <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
-                  deleting…
+              {pathView && (
+                <button
+                  type="button"
+                  onClick={clearPath}
+                  className="inline-flex items-center gap-1.5 border border-primary/60 bg-card px-2 py-1 font-mono text-[10px] uppercase tracking-[0.12em] text-primary transition-all hover:border-primary"
+                >
+                  <Route className="size-3" />
+                  path: {pathView.label}
+                  <X className="size-3" />
+                </button>
+              )}
+              {focus && (
+                <button
+                  type="button"
+                  onClick={clearPin}
+                  className="inline-flex items-center gap-1.5 border border-primary/60 bg-card px-2 py-1 font-mono text-[10px] uppercase tracking-[0.12em] text-primary transition-all hover:border-primary"
+                >
+                  <MapPin className="size-3" />
+                  pin: {focus.lat}, {focus.lon}
+                  <X className="size-3" />
+                </button>
+              )}
+              <div className="ml-auto flex items-center gap-3">
+                {plotted.length > 0 &&
+                  (clearing ? (
+                    <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+                      deleting…
+                    </span>
+                  ) : (
+                    <InlineConfirm
+                      confirming={confirmClear}
+                      onAskRemove={() => setConfirmClear(true)}
+                      onCancel={() => setConfirmClear(false)}
+                      onConfirm={deleteShown}
+                      triggerLabel={`delete ${plotted.length} shown`}
+                    />
+                  ))}
+                <span className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+                  <MapPin className="size-3" />
+                  <span className="tabular-nums">
+                    {plotted.length}/{located.length}
+                  </span>
+                  <span className="text-muted-foreground/60">located</span>
                 </span>
-              ) : (
-                <InlineConfirm
-                  confirming={confirmClear}
-                  onAskRemove={() => setConfirmClear(true)}
-                  onCancel={() => setConfirmClear(false)}
-                  onConfirm={deleteShown}
-                  triggerLabel={`delete ${plotted.length} shown`}
-                />
-              ))}
-            <span className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
-              <MapPin className="size-3" />
-              <span className="tabular-nums">
-                {plotted.length}/{located.length}
-              </span>
-              <span className="text-muted-foreground/60">located</span>
-            </span>
-          </div>
+              </div>
+            </>
+          )}
         </div>
 
         <div className="relative">
@@ -591,9 +655,53 @@ export function MapPage() {
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
+        {connections && <ConnectionLists cw={cw} />}
       </section>
 
+      {connections && (
+        <ConnectionSheet
+          cw={cw}
+          onOpenPeer={(pubkey) => {
+            cw.setSelection(null);
+            selectPeer(pubkey);
+          }}
+        />
+      )}
       <PeerDetailSheet {...sheetProps} companions={companions} />
+    </div>
+  );
+}
+
+function ModeSwitch({
+  connections,
+  onChange,
+}: {
+  connections: boolean;
+  onChange: (connections: boolean) => void;
+}) {
+  const option = (on: boolean, label: string) => (
+    <button
+      type="button"
+      aria-pressed={connections === on}
+      onClick={() => connections !== on && onChange(on)}
+      className={cn(
+        "relative px-2 py-1 font-mono text-[10px] uppercase tracking-[0.12em] transition-colors before:absolute before:inset-x-0 before:-inset-y-2 before:content-['']",
+        connections === on
+          ? "bg-primary/15 text-primary"
+          : "text-muted-foreground hover:text-foreground",
+      )}
+    >
+      {label}
+    </button>
+  );
+  return (
+    <div
+      role="group"
+      aria-label="Map mode"
+      className="mr-2 inline-flex divide-x divide-border border border-border bg-card"
+    >
+      {option(false, "peers")}
+      {option(true, "connections")}
     </div>
   );
 }

@@ -11,9 +11,6 @@ import (
 	meshcore "github.com/meshcore-go/meshcore-go"
 )
 
-// DefaultPacketRetentionDays is the packet log's age limit when settings leave it unset.
-const DefaultPacketRetentionDays = 7
-
 // PacketFieldsFromPkt is the single derivation of the hex packet hash and hop path, so stored, broadcast and displayed forms cannot drift.
 func PacketFieldsFromPkt(pkt *meshcore.Packet) (packetHash, path string) {
 	h := pkt.PacketHash()
@@ -124,38 +121,47 @@ func (r *PacketRepo) Count(ctx context.Context) (int64, error) {
 	return count, nil
 }
 
-// PruneBatchBefore deletes up to batch of the oldest packets received before cutoff; more = a full batch went.
-func (r *PacketRepo) PruneBatchBefore(ctx context.Context, cutoff time.Time, batch int) (more bool, err error) {
-	// ponytail: received_at is host-zone time.String(), so ages compare parsed in Go; assumes ids follow time.
-	rows, err := r.db.QueryContext(ctx, "SELECT id, received_at FROM packets ORDER BY id LIMIT ?", batch)
+// PruneBatchBefore deletes the packets received before cutoff among the batch after id `after`, oldest first; next is the cursor for the following call, 0 when done.
+func (r *PacketRepo) PruneBatchBefore(ctx context.Context, cutoff time.Time, after int64, batch int) (next int64, err error) {
+	// ponytail: received_at is host-zone time.String(), so ages compare parsed in Go and stop at the first recent row (ids follow time); a WHERE once it is unix ms.
+	rows, err := r.db.QueryContext(ctx, "SELECT id, received_at FROM packets WHERE id > ? ORDER BY id LIMIT ?", after, batch)
 	if err != nil {
-		return false, fmt.Errorf("reading oldest packets: %w", err)
+		return 0, fmt.Errorf("reading oldest packets: %w", err)
 	}
 	defer rows.Close()
-	var lastOld int64
-	n := 0
+	now := time.Now()
+	var old []any
+	n, done := 0, false
 	for rows.Next() {
-		var id int64
 		var at time.Time
-		if err := rows.Scan(&id, &at); err != nil {
-			return false, fmt.Errorf("scanning packet age: %w", err)
+		if err := rows.Scan(&next, &at); err != nil {
+			return 0, fmt.Errorf("scanning packet age: %w", err)
+		}
+		n++
+		// Stamped in the future by a clock that was wrong: stepping past it keeps one bad row from ending every prune.
+		if at.After(now) {
+			continue
 		}
 		if !at.Before(cutoff) {
+			done = true
 			break
 		}
-		lastOld, n = id, n+1
+		old = append(old, next)
 	}
 	if err := rows.Err(); err != nil {
-		return false, fmt.Errorf("iterating packet ages: %w", err)
+		return 0, fmt.Errorf("iterating packet ages: %w", err)
 	}
 	rows.Close()
-	if n == 0 {
-		return false, nil
+	if len(old) > 0 {
+		q := "DELETE FROM packets WHERE id IN (?" + strings.Repeat(",?", len(old)-1) + ")"
+		if _, err := r.db.ExecContext(ctx, q, old...); err != nil {
+			return 0, fmt.Errorf("pruning packets: %w", err)
+		}
 	}
-	if _, err := r.db.ExecContext(ctx, "DELETE FROM packets WHERE id <= ?", lastOld); err != nil {
-		return false, fmt.Errorf("pruning packets: %w", err)
+	if done || n < batch {
+		return 0, nil
 	}
-	return n == batch, nil
+	return next, nil
 }
 
 // ScanFloodRxSince calls fn, newest first, for each non-trace RX flood packet (the ones with a relay path) since cutoff.
@@ -181,4 +187,30 @@ func (r *PacketRepo) ScanFloodRxSince(ctx context.Context, cutoff time.Time, fn 
 		fn(&p)
 	}
 	return rows.Err()
+}
+
+// SentSince maps each packet hash we transmitted since cutoff to whether we started it (an empty path) rather than only relayed it.
+func (r *PacketRepo) SentSince(ctx context.Context, cutoff time.Time) (map[string]bool, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT received_at, packet_hash, path = '' FROM packets
+		WHERE direction = 'tx' AND packet_hash != ''
+		ORDER BY id DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("querying sent packets: %w", err)
+	}
+	defer rows.Close()
+	sent := map[string]bool{}
+	for rows.Next() {
+		var at time.Time
+		var hash string
+		var started bool
+		if err := rows.Scan(&at, &hash, &started); err != nil {
+			return nil, fmt.Errorf("scanning sent packet: %w", err)
+		}
+		if at.Before(cutoff) {
+			break
+		}
+		sent[hash] = sent[hash] || started
+	}
+	return sent, rows.Err()
 }

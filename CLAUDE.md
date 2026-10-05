@@ -83,7 +83,7 @@ user-visible change adds its entry under `## Unreleased`. Each entry is a bold
 one-sentence result, then what it means for the user: no mechanism, no
 investigation, no internal or tooling changes (that story goes in the commit and
 the PR), and no untested lists. Use `### Added`, `### Changed` and `### Fixed`,
-plus `### Upgrading` when a user must act, and a schema line when `user_version`
+plus `### Upgrading` when a user must act. No schema line when `user_version`
 moves. Older entries predate this and stay as they are. At release, rename the
 section `## vX.Y.Z - YYYY-MM-DD` (plain hyphen) and open it with the baseline tag
 and a one-line summary. The release workflow's awk takes the section from the

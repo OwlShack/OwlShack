@@ -133,7 +133,7 @@ func assembleFromRows(rows *configRows) *config.Config {
 		ModemToken:          s.ModemToken,
 		PathHashSize:        s.PathHashSize,
 		DutyCycle:           s.DutyCyclePct,
-		PacketRetentionDays: s.PacketRetentionDays,
+		PacketRetentionDays: &s.PacketRetentionDays,
 		SetupComplete:       boolPtr(s.SetupComplete),
 	}
 
@@ -322,7 +322,7 @@ func writeConfigToTables(ctx context.Context, st *store.Store, cfg *config.Confi
 		ModemToken:          cfg.ModemToken,
 		PathHashSize:        cfg.PathHashSize,
 		DutyCyclePct:        cfg.DutyCycle,
-		PacketRetentionDays: cfg.PacketRetentionDays,
+		PacketRetentionDays: cfg.PacketRetentionDaysOr(),
 		SetupComplete:       cfg.SetupComplete != nil && *cfg.SetupComplete,
 	}); err != nil {
 		return err

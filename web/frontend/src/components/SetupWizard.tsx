@@ -163,6 +163,7 @@ export function SetupWizard({
         tx: tx === "" ? null : parseInt(tx, 10),
         pathHashSize: parseInt(pathHashSize, 10) || 1,
         dutyCycle: settings.dutyCycle,
+        packetRetentionDays: settings.packetRetentionDays,
         ...(modemToken !== "" ? { modemToken } : {}),
         setupComplete: true,
       });
