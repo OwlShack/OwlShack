@@ -37,6 +37,10 @@ top until tagged.
   a whole hour and that have no letter abbreviation, including Nepal, Iran, Afghanistan, Sri Lanka,
   Myanmar and the Chatham Islands, these lists failed to load. Times saved before the upgrade are
   kept and show correctly.
+- **Restoring a backup from an older version keeps its own copy to go back to.** After an update,
+  restoring an older backup upgraded it without a copy, and the copy left from the update held the
+  database from before the restore, so going back to the older version brought back the wrong
+  data.
 
 ## v1.5.0 - 2026-10-01
 

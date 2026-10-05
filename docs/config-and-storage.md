@@ -390,7 +390,12 @@ without hand-copying `meshcore.db`. UI is `BackupWizard` (opened from
   made (a full disk), the upgrade goes ahead without one and logs a warning, so
   an updated node still starts. Builds from this one
   on name the copy when they refuse a newer database (v1.4.x does not). Nothing
-  is copied for a fresh database.
+  is copied for a fresh database. Adopting a restore moves the live database's
+  copies along with it (`meshcore.db.replaced.pre-vN-to-vM`) and deletes the
+  older `.replaced` ones only when it replaces that database, as a finished
+  upgrade's copy left behind would read as an unfinished one and the restored
+  database would be upgraded uncopied. A copy that would land on an existing
+  file refuses the restore, naming both, before anything moves.
 
 ## Packet log & the Map's Connections mode
 

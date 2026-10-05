@@ -90,12 +90,22 @@ func AdoptPendingRestore(dbPath string) (bool, error) {
 		return false, nil // nothing staged
 	}
 	// Keep the outgoing DB next to the new one rather than deleting it.
+	prev := dbPath + ".replaced"
 	if _, err := os.Stat(dbPath); err == nil {
-		prev := dbPath + ".replaced"
+		old, err := upgradeCopies(prev)
+		if err != nil {
+			return false, fmt.Errorf("listing the set-aside database's copies: %w", err)
+		}
 		_ = os.Remove(prev)
+		for _, c := range old {
+			_ = os.Remove(c.path)
+		}
 		if err := os.Rename(dbPath, prev); err != nil {
 			return false, fmt.Errorf("setting aside current database: %w", err)
 		}
+	}
+	if err := moveUpgradeCopies(dbPath, prev); err != nil {
+		return false, err
 	}
 	// WAL and shm belong to the old DB; leaving them would corrupt the new one.
 	for _, suffix := range []string{"-wal", "-shm"} {
@@ -105,6 +115,27 @@ func AdoptPendingRestore(dbPath string) (bool, error) {
 		return false, fmt.Errorf("adopting restored database: %w", err)
 	}
 	return true, nil
+}
+
+// moveUpgradeCopies hands dbPath's pre-upgrade copies to the database set aside as prev, refusing before any move rather than overwrite one.
+func moveUpgradeCopies(dbPath, prev string) error {
+	copies, err := upgradeCopies(dbPath)
+	if err != nil {
+		return fmt.Errorf("listing pre-upgrade copies: %w", err)
+	}
+	dst := make([]string, len(copies))
+	for i, c := range copies {
+		dst[i] = fmt.Sprintf("%s.pre-v%d-to-v%d", prev, c.from, c.to)
+		if _, err := os.Stat(dst[i]); err == nil {
+			return fmt.Errorf("cannot move %s aside: %s already exists; move one of them out of the way", c.path, dst[i])
+		}
+	}
+	for i, c := range copies {
+		if err := os.Rename(c.path, dst[i]); err != nil {
+			return fmt.Errorf("moving %s with the set-aside database: %w", c.path, err)
+		}
+	}
+	return nil
 }
 
 // StageRestore writes backup bytes beside the live DB for the next startup to adopt.
