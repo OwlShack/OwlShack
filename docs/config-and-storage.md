@@ -137,9 +137,8 @@ radio/connection change still restarts everything (modem reconnect);
   name a private broker's host and port. Both are ages for the same reason the
   radio's are: `connected` is a sample, so a broker reconnecting every thirty
   seconds reads `true` on nearly every scrape and only a connection age resetting
-  to near zero reveals the flapping, while the observer never clears its last
-  error on reconnect, so a boolean built from it would stay true for the life of
-  the process. Leaving the nodes out costs
+  to near zero reveals the flapping. `lastErrorSecs` is null once a connection
+  has no error of its own. Leaving the nodes out costs
   nothing: peer counts are hydrated from SQLite and only grow, so they read the
   same with the antenna unplugged, and a node that fails to start exits the
   process rather than quietly leaving a list. "No node is running at all" is the
@@ -256,11 +255,18 @@ radio/connection change still restarts everything (modem reconnect);
   Templates are validated in `BrokerConfig.Validate` (unknown placeholders,
   MQTT wildcards). **Broker connection state is surfaced**:
   `GET /api/mqtt/status` returns every *configured* enabled broker with
-  `connected` (read from paho's own `IsConnected`, so its auto-reconnect needs
-  no tracking), `lastError`, `connectedTs`, and publish/drop counts; the
+  `connected` (paho's `IsConnectionOpen`; its `IsConnected` stays true while
+  reconnecting), `lastError`, `connectedTs`, and publish/drop counts; the
   MqttPage polls it every 5 s for the per-broker pill. It lists configured
   brokers rather than live clients on purpose — a broker that never connected
-  must stay visible. **A failed initial connect retries** (`retryConnect`,
+  must stay visible. **`lastError` is the current connection's**: a connect
+  clears it, and each error records the client it came from, so an old client's
+  error never shows as the new one's. **A token refresh closes the old session
+  before dialling** (`refreshToken`, under `brokerClient.refreshMu`, which
+  `doPublish` takes too, so publishes wait rather than drop): every client shares
+  one ClientID, and a second session is a takeover, so the broker kicks the old
+  one and publishes our offline will, and paho redials a kicked client at once
+  (its first reconnect has no delay), so the two fight. **A failed initial connect retries** (`retryConnect`,
   5 s doubling to 5 min, guarded by `brokerClient.retrying`): paho's
   `SetAutoReconnect` only covers a client that connected at least once, so
   without it a broker that was down at startup stayed down until the process

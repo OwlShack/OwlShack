@@ -68,6 +68,8 @@ type brokerClient struct {
 	published  atomic.Uint64
 	// retrying guards retryConnect so its two call sites never run two loops for one broker.
 	retrying atomic.Bool
+	// refreshMu is held while a token refresh replaces the client, so a publish waits for the new one rather than dropping.
+	refreshMu sync.Mutex
 }
 
 func (b *brokerClient) currentClient() paho.Client {
@@ -158,8 +160,10 @@ type Observer struct {
 
 // brokerHealth is the connection history we report for one broker.
 type brokerHealth struct {
-	lastErr     string
-	lastErrAt   time.Time
+	lastErr   string
+	lastErrAt time.Time
+	// errClient is the connection the error came from; nil when no connection was made.
+	errClient   paho.Client
 	connectedAt time.Time
 }
 
@@ -192,9 +196,11 @@ func (o *Observer) recordConnected(name string) {
 	defer o.healthMu.Unlock()
 	h := o.brokerHealthLocked(name)
 	h.connectedAt = time.Now()
+	h.lastErr, h.lastErrAt, h.errClient = "", time.Time{}, nil
 }
 
-func (o *Observer) recordBrokerErr(name string, err error) {
+// recordBrokerErr keeps the latest error and the client it came from (nil when none connected), so a replaced client's error never shows as the current one's.
+func (o *Observer) recordBrokerErr(name string, c paho.Client, err error) {
 	if err == nil {
 		return
 	}
@@ -203,6 +209,7 @@ func (o *Observer) recordBrokerErr(name string, err error) {
 	h := o.brokerHealthLocked(name)
 	h.lastErr = err.Error()
 	h.lastErrAt = time.Now()
+	h.errClient = c
 }
 
 func (o *Observer) brokerHealthLocked(name string) *brokerHealth {
@@ -217,7 +224,7 @@ func (o *Observer) brokerHealthLocked(name string) *brokerHealth {
 	return h
 }
 
-// BrokerStatuses reports every configured broker, connected or not; liveness comes from paho's own IsConnected.
+// BrokerStatuses reports every configured broker, connected or not; liveness is paho's IsConnectionOpen, as IsConnected stays true while reconnecting.
 func (o *Observer) BrokerStatuses() []BrokerStatus {
 	live := make(map[string]*brokerClient)
 	for _, bc := range o.brokerList() {
@@ -234,9 +241,10 @@ func (o *Observer) BrokerStatuses() []BrokerStatus {
 			AuthType:  cmp.Or(bcfg.AuthType, "none"),
 			Enabled:   bcfg.Enabled,
 		}
+		var cur paho.Client
 		if bc := live[bcfg.Name]; bc != nil {
-			if c := bc.currentClient(); c != nil {
-				st.Connected = c.IsConnected()
+			if cur = bc.currentClient(); cur != nil {
+				st.Connected = cur.IsConnectionOpen()
 			}
 			st.Published = bc.published.Load()
 			st.Dropped = bc.dropped.Load()
@@ -244,7 +252,10 @@ func (o *Observer) BrokerStatuses() []BrokerStatus {
 		}
 		o.healthMu.Lock()
 		if h := o.health[bcfg.Name]; h != nil {
-			st.LastError, st.LastErrorAt, st.ConnectedAt = h.lastErr, h.lastErrAt, h.connectedAt
+			st.ConnectedAt = h.connectedAt
+			if h.errClient == nil || h.errClient == cur {
+				st.LastError, st.LastErrorAt = h.lastErr, h.lastErrAt
+			}
 		}
 		o.healthMu.Unlock()
 		out = append(out, st)
@@ -383,7 +394,9 @@ func (o *Observer) publishWorker(bc *brokerClient) {
 }
 
 func (o *Observer) doPublish(bc *brokerClient, job publishJob) {
+	bc.refreshMu.Lock()
 	client := bc.currentClient()
+	bc.refreshMu.Unlock()
 	if client == nil || !client.IsConnected() {
 		// Publishing to a disconnected client would block for the full publishWaitTimeout per job and stall the worker.
 		bc.dropped.Add(1)
@@ -392,12 +405,12 @@ func (o *Observer) doPublish(bc *brokerClient, job publishJob) {
 	token := client.Publish(job.topic, job.qos, job.retain, job.payload)
 	if !token.WaitTimeout(publishWaitTimeout) {
 		o.log.Warn("publish timed out", "broker", bc.cfg.Name, "topic", job.topic)
-		o.recordBrokerErr(bc.cfg.Name, fmt.Errorf("publish to %s timed out", job.topic))
+		o.recordBrokerErr(bc.cfg.Name, client, fmt.Errorf("publish to %s timed out", job.topic))
 		return
 	}
 	if err := token.Error(); err != nil {
 		o.log.Error("publish error", "broker", bc.cfg.Name, "error", err)
-		o.recordBrokerErr(bc.cfg.Name, err)
+		o.recordBrokerErr(bc.cfg.Name, client, err)
 		return
 	}
 	bc.published.Add(1)
@@ -555,7 +568,7 @@ func (o *Observer) retryConnect(ctx context.Context, bc *brokerClient) {
 
 		client, err := o.connectBroker(bc.cfg, bc.iata)
 		if err != nil {
-			o.recordBrokerErr(bc.cfg.Name, err)
+			o.recordBrokerErr(bc.cfg.Name, nil, err)
 			delay = min(max(delay*2, connectRetryMin), connectRetryMax)
 			// The first failure is the one an operator needs to see; the rest are a loop.
 			if firstFailure {
@@ -618,24 +631,23 @@ func (o *Observer) refreshToken(ctx context.Context, bc *brokerClient) bool {
 	}
 	o.log.Debug("refreshing token", "broker", bc.cfg.Name)
 
+	// Close the old session before dialling: a second session on the same ClientID is a takeover, which makes
+	// the broker publish our offline will, and paho redials a kicked client at once, so the two fight.
+	bc.refreshMu.Lock()
+	c.Disconnect(250)
 	newClient, err := o.connectBroker(bc.cfg, bc.iata)
+	if err == nil {
+		bc.swapClient(newClient)
+	}
+	bc.refreshMu.Unlock()
 	if err != nil {
-		// Drop the stale client only here, not before the dial: its token has minutes left, so
-		// retryConnect's already-connected guard would see it healthy and return without dialling.
-		c.Disconnect(250)
 		o.log.Error("token refresh reconnect failed, retrying in background",
 			"broker", bc.cfg.Name, "error", err)
-		o.recordBrokerErr(bc.cfg.Name, err)
+		o.recordBrokerErr(bc.cfg.Name, nil, err)
 		// Without this the broker sits disconnected until the next refresh tick.
 		go o.retryConnect(ctx, bc)
 		return false
 	}
-	// Swap before dropping the old one: the new client is already live, so publishes never see the
-	// dial as a gap, and the duplicate-ClientID overlap lasts only as long as the swap. Disconnecting
-	// here rather than after publishStatus keeps that overlap far inside paho's 1s reconnect delay,
-	// so the kicked old session cannot come back and fight for the ClientID.
-	bc.swapClient(newClient)
-	c.Disconnect(250)
 	o.publishStatus(ctx, bc, "online")
 	o.log.Info("token refreshed", "broker", bc.cfg.Name)
 	return true
@@ -776,7 +788,7 @@ func (o *Observer) connectBroker(bcfg config.BrokerConfig, iata string) (paho.Cl
 			if err != nil {
 				// The provider cannot fail, so surface the error here.
 				o.log.Error("generating auth token", "broker", bcfg.Name, "error", err)
-				o.recordBrokerErr(bcfg.Name, fmt.Errorf("generating auth token: %w", err))
+				o.recordBrokerErr(bcfg.Name, nil, fmt.Errorf("generating auth token: %w", err))
 			}
 			return username, token
 		})
@@ -793,9 +805,9 @@ func (o *Observer) connectBroker(bcfg config.BrokerConfig, iata string) (paho.Cl
 	opts.SetWill(statusTopic, string(offlinePayload), 1, bcfg.RetainStatus)
 
 	opts.SetOnConnectHandler(func(paho.Client) { o.recordConnected(bcfg.Name) })
-	opts.SetConnectionLostHandler(func(_ paho.Client, err error) {
+	opts.SetConnectionLostHandler(func(c paho.Client, err error) {
 		o.log.Warn("broker connection lost", "broker", bcfg.Name, "error", err)
-		o.recordBrokerErr(bcfg.Name, err)
+		o.recordBrokerErr(bcfg.Name, c, err)
 	})
 
 	client := paho.NewClient(opts)

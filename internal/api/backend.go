@@ -270,14 +270,14 @@ type DatabaseHealth struct {
 
 // No node listing on purpose: a name or peer count cannot report a fault (a node that fails to start is a problem entry), and both resolve to coordinates on public maps.
 
-// BrokerHealth carries ages, not the transport error (it names the broker's address) and not flags (the observer never clears lastErr, so a bool would latch).
+// BrokerHealth carries ages, not the transport error (it names the broker's address).
 type BrokerHealth struct {
 	Name      string `json:"name"`
 	Enabled   bool   `json:"enabled"`
 	Connected bool   `json:"connected"`
 	// Null when disconnected. Resetting toward zero on every scrape is how flapping shows; Connected alone reads true.
 	ConnectedSecs *int64 `json:"connectedSecs"`
-	// Null when it has never erred.
+	// Null when the current connection has no error.
 	LastErrorSecs *int64 `json:"lastErrorSecs"`
 	Published     uint64 `json:"published"`
 	Dropped       uint64 `json:"dropped"`
