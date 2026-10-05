@@ -41,7 +41,7 @@ func scanMessage(s interface{ Scan(...any) error }) (Message, error) {
 	var m Message
 	err := s.Scan(
 		&m.ID, &m.CompanionID, &m.Channel, &m.ChannelHash,
-		&m.Sender, &m.Text, &m.Direction, &m.Timestamp,
+		&m.Sender, &m.Text, &m.Direction, unixMS(&m.Timestamp),
 		&m.SNR, &m.RSSI, &m.RepeatCount,
 		&m.PathHashes, &m.PathHashSize, &m.Hops, &m.Status,
 	)
@@ -52,7 +52,7 @@ func (r *MessageRepo) Insert(ctx context.Context, m *Message) error {
 	res, err := r.db.ExecContext(ctx, `
 		INSERT INTO messages (companion_id, channel, channel_hash, sender, text, direction, timestamp, snr, rssi, confirmed, path_hashes, path_hash_size, hops, status)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		m.CompanionID, m.Channel, m.ChannelHash, m.Sender, m.Text, m.Direction, m.Timestamp, m.SNR, m.RSSI, m.RepeatCount,
+		m.CompanionID, m.Channel, m.ChannelHash, m.Sender, m.Text, m.Direction, m.Timestamp.UnixMilli(), m.SNR, m.RSSI, m.RepeatCount,
 		m.PathHashes, m.PathHashSize, m.Hops, m.Status,
 	)
 	if err != nil {

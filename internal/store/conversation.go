@@ -66,23 +66,23 @@ func (r *ConversationRepo) channelConversation(ctx context.Context, companionID 
 
 	var lastID sql.NullInt64
 	var text, sender, direction sql.NullString
-	var ts sql.NullTime
+	var ts time.Time
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id, text, sender, direction, timestamp
 		FROM messages
 		WHERE companion_id = ? AND channel = ?
 		ORDER BY id DESC LIMIT 1`,
 		companionID, channel,
-	).Scan(&lastID, &text, &sender, &direction, &ts)
+	).Scan(&lastID, &text, &sender, &direction, unixMS(&ts))
 
 	if err == nil && text.Valid {
 		conv.LastMessage = &ConversationMessage{
 			Text:      text.String,
 			Sender:    sender.String,
 			Direction: direction.String,
-			Timestamp: ts.Time,
+			Timestamp: ts,
 		}
-		conv.LastActive = ts.Time
+		conv.LastActive = ts
 		conv.LastMessageID = lastID.Int64
 	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("querying last channel message: %w", err)
@@ -122,23 +122,23 @@ func (r *ConversationRepo) contactConversation(ctx context.Context, companionID 
 
 	var lastID sql.NullInt64
 	var text, sender, direction sql.NullString
-	var ts sql.NullTime
+	var ts time.Time
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id, text, sender, direction, timestamp
 		FROM messages
 		WHERE companion_id = ? AND channel = ?
 		ORDER BY id DESC LIMIT 1`,
 		companionID, channelKey,
-	).Scan(&lastID, &text, &sender, &direction, &ts)
+	).Scan(&lastID, &text, &sender, &direction, unixMS(&ts))
 
 	if err == nil && text.Valid {
 		conv.LastMessage = &ConversationMessage{
 			Text:      text.String,
 			Sender:    sender.String,
 			Direction: direction.String,
-			Timestamp: ts.Time,
+			Timestamp: ts,
 		}
-		conv.LastActive = ts.Time
+		conv.LastActive = ts
 		conv.LastMessageID = lastID.Int64
 	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("querying last contact message: %w", err)

@@ -51,7 +51,7 @@ func (r *PeerRepo) Upsert(ctx context.Context, p *Peer) error {
 			snr                = excluded.snr,
 			rssi               = excluded.rssi`,
 		p.PubKey, p.Name, p.Type, p.Lat, p.Lon, p.Feat1, p.Feat2,
-		p.OutPath, p.OutPathHashSize, p.LastAdvertTS, p.LastSeen, p.SNR, p.RSSI,
+		p.OutPath, p.OutPathHashSize, p.LastAdvertTS, p.LastSeen.UnixMilli(), p.SNR, p.RSSI,
 	)
 	if err != nil {
 		return fmt.Errorf("upserting peer: %w", err)
@@ -112,7 +112,7 @@ func (r *PeerRepo) GetByPubKey(ctx context.Context, pubkey []byte) (*Peer, error
 		SELECT pubkey, name, type, lat, lon, feat1, feat2, out_path, out_path_hash_size, last_advert_ts, last_seen, snr, rssi
 		FROM discovered_peers WHERE pubkey = ?`, pubkey,
 	).Scan(&p.PubKey, &p.Name, &p.Type, &p.Lat, &p.Lon,
-		&feat1, &feat2, &outPath, &p.OutPathHashSize, &lastAdvertTS, &p.LastSeen, &snr, &rssi)
+		&feat1, &feat2, &outPath, &p.OutPathHashSize, &lastAdvertTS, unixMS(&p.LastSeen), &snr, &rssi)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -157,7 +157,7 @@ func scanPeers(rows *sql.Rows) ([]Peer, error) {
 		if err := rows.Scan(
 			&p.PubKey, &p.Name, &p.Type, &p.Lat, &p.Lon,
 			&feat1, &feat2, &outPath, &p.OutPathHashSize, &lastAdvertTS,
-			&p.LastSeen, &snr, &rssi,
+			unixMS(&p.LastSeen), &snr, &rssi,
 		); err != nil {
 			return nil, err
 		}

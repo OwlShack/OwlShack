@@ -368,8 +368,8 @@ without hand-copying `meshcore.db`. UI is `BackupWizard` (opened from
   i.e. an upper bound.
 - **Day windows** are `-1` all, `0` none, or N days (`store.DaysAll` /
   `DaysNone`). They apply to `packets.received_at` and `messages.timestamp`
-  (DATETIME) and `node_metrics.ts` / `node_neighbors.ts` (unix seconds) — hence
-  the `datetime('now',?)` vs `unixepoch('now',?)` split.
+  (unix ms) and `node_metrics.ts` / `node_neighbors.ts` (unix seconds), hence
+  the `sinceMS` and `sinceSecs` cutoffs in `backup.go`.
 - **Import sniffs the upload**: the `SQLite format 3\0` magic means a backup
   (staged); anything else goes through `importConfigFile`, so an operator can
   also bring an old `.toml`/`.yaml`/`.json` config across through the UI. The
@@ -401,12 +401,11 @@ without hand-copying `meshcore.db`. UI is `BackupWizard` (opened from
   It deletes 500 rows per writer turn (`PacketRepo.PruneBatchBefore`) so a long
   backlog never fills the writer queue and drops RX writes. SQLite does not
   shrink the file, so lowering the setting frees pages for reuse only.
-- **`received_at` must never be compared as SQL text.** modernc writes it as Go's
-  `time.String()` in the host zone (`... +1200 NZST`), so `datetime('now', ...)`
-  is off by the UTC offset. The prune and `ScanFloodRxSince` walk ids and compare
-  parsed times in Go, which assumes ids follow time. The prune steps past a row
-  stamped in the future (a clock that was wrong) rather than stopping at it. The
-  backup day windows above still compare in SQL and inherit the offset.
+- **`received_at` is UTC unix milliseconds**, like every time Go writes (see
+  CLAUDE.md), so the prune is a batched `DELETE ... WHERE received_at < ?` and
+  `ScanFloodRxSince` / `SentSince` take a `WHERE` range, all on
+  `idx_packets_received_at`. A row stamped in the future by a wrong clock stays
+  until it ages past the cutoff.
 - **`GET /api/connection-web?hours=N&ownEchoes=bool`** (`routes_connection_web.go`) folds RX
   flood packets (not DIRECT, not TRACE, whose path holds SNR) into distinct
   routes ending at `"self"`. Hop hashes resolve to REPEATER peers only; colliding

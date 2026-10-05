@@ -783,8 +783,7 @@ func TestPacketRepo_ListFilter(t *testing.T) {
 	}
 }
 
-// received_at is host-zone text, so a SQL-text compare would be off by the UTC offset; +13h spans every window here.
-// The oldest row is stamped an hour ahead, as a clock set wrong then corrected leaves it; it must not end the prune.
+// A packet stamped in another zone still ages by the instant, and one stamped ahead by a wrong clock stays until it is old.
 func TestPacketRepo_PruneBatchBeforeAcrossZones(t *testing.T) {
 	t.Parallel()
 	st := newTestStore(t)
@@ -803,12 +802,11 @@ func TestPacketRepo_PruneBatchBeforeAcrossZones(t *testing.T) {
 		}
 	}
 
-	next, err := st.Packets.PruneBatchBefore(ctx, cutoff, 0, 1)
-	if err != nil || next == 0 {
-		t.Fatalf("first batch of 1: next=%d err=%v, want a cursor past the future-stamped row", next, err)
+	if n, err := st.Packets.PruneBatchBefore(ctx, cutoff, 1); err != nil || n != 1 {
+		t.Fatalf("batch of 1: pruned %d err=%v, want 1", n, err)
 	}
-	if next, err = st.Packets.PruneBatchBefore(ctx, cutoff, next, 500); err != nil || next != 0 {
-		t.Fatalf("second batch: next=%d err=%v, want 0 (done)", next, err)
+	if n, err := st.Packets.PruneBatchBefore(ctx, cutoff, 500); err != nil || n != 1 {
+		t.Fatalf("second batch: pruned %d err=%v, want the 1 left older than the cutoff", n, err)
 	}
 
 	var got []time.Time
@@ -832,8 +830,8 @@ func TestPacketRepo_PruneBatchBeforeAcrossZones(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 {
-		t.Errorf("last hour scanned %d packets, want 1", len(got))
+	if len(got) != 2 {
+		t.Errorf("last hour scanned %d packets, want the 10-minute one and the future-stamped one", len(got))
 	}
 }
 
@@ -903,7 +901,7 @@ func TestHopPinRepo_NonePinIsPresent(t *testing.T) {
 // Bump wantVersion whenever a migration file is added.
 func TestStore_MigrateUserVersion(t *testing.T) {
 	t.Parallel()
-	const wantVersion = 23 // one per file in migrations/
+	const wantVersion = 24 // one per file in migrations/
 	st := newTestStore(t)
 	var v int
 	if err := st.db.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&v); err != nil {

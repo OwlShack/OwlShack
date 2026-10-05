@@ -42,7 +42,7 @@ func (r *EchoRepo) Insert(ctx context.Context, e *MessageEcho) error {
 	res, err := r.db.ExecContext(ctx, `
 		INSERT INTO message_echoes (message_id, received_at, path_hashes, path_hash_size, hops, snr, rssi)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		e.MessageID, e.ReceivedAt, e.PathHashes, e.PathHashSize, e.Hops, e.SNR, e.RSSI,
+		e.MessageID, e.ReceivedAt.UnixMilli(), e.PathHashes, e.PathHashSize, e.Hops, e.SNR, e.RSSI,
 	)
 	if err != nil {
 		return fmt.Errorf("inserting echo: %w", err)
@@ -70,7 +70,7 @@ func (r *EchoRepo) ListByMessage(ctx context.Context, messageID int64) ([]Messag
 	for rows.Next() {
 		var e MessageEcho
 		if err := rows.Scan(
-			&e.ID, &e.MessageID, &e.ReceivedAt, &e.PathHashes,
+			&e.ID, &e.MessageID, unixMS(&e.ReceivedAt), &e.PathHashes,
 			&e.PathHashSize, &e.Hops, &e.SNR, &e.RSSI,
 		); err != nil {
 			return nil, fmt.Errorf("scanning echo row: %w", err)

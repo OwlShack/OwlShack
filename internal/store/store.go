@@ -227,3 +227,20 @@ func (s *Store) Close() error {
 	})
 	return s.db.Close()
 }
+
+// unixMS scans a time column, which holds UTC unix milliseconds; NULL scans as the zero time.
+func unixMS(t *time.Time) sql.Scanner { return msScanner{t} }
+
+type msScanner struct{ t *time.Time }
+
+func (s msScanner) Scan(v any) error {
+	switch v := v.(type) {
+	case int64:
+		*s.t = time.UnixMilli(v)
+	case nil:
+		*s.t = time.Time{}
+	default:
+		return fmt.Errorf("time column holds %T %v, want unix milliseconds", v, v)
+	}
+	return nil
+}

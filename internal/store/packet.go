@@ -58,7 +58,7 @@ func (r *PacketRepo) Insert(ctx context.Context, p *PacketRecord) error {
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO packets (received_at, direction, raw, route_type, payload_type, snr, rssi, packet_hash, path)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		p.ReceivedAt, p.Direction, p.Raw, p.RouteType, p.PayloadType, p.SNR, p.RSSI, packetHash, path,
+		p.ReceivedAt.UnixMilli(), p.Direction, p.Raw, p.RouteType, p.PayloadType, p.SNR, p.RSSI, packetHash, path,
 	)
 	if err != nil {
 		return fmt.Errorf("inserting packet: %w", err)
@@ -99,7 +99,7 @@ func (r *PacketRepo) List(ctx context.Context, limit, offset int, filter PacketF
 	for rows.Next() {
 		var p PacketRecord
 		if err := rows.Scan(
-			&p.ID, &p.ReceivedAt, &p.Direction, &p.Raw,
+			&p.ID, unixMS(&p.ReceivedAt), &p.Direction, &p.Raw,
 			&p.RouteType, &p.PayloadType, &p.SNR, &p.RSSI,
 		); err != nil {
 			return nil, fmt.Errorf("scanning packet row: %w", err)
@@ -121,47 +121,15 @@ func (r *PacketRepo) Count(ctx context.Context) (int64, error) {
 	return count, nil
 }
 
-// PruneBatchBefore deletes the packets received before cutoff among the batch after id `after`, oldest first; next is the cursor for the following call, 0 when done.
-func (r *PacketRepo) PruneBatchBefore(ctx context.Context, cutoff time.Time, after int64, batch int) (next int64, err error) {
-	// ponytail: received_at is host-zone time.String(), so ages compare parsed in Go and stop at the first recent row (ids follow time); a WHERE once it is unix ms.
-	rows, err := r.db.QueryContext(ctx, "SELECT id, received_at FROM packets WHERE id > ? ORDER BY id LIMIT ?", after, batch)
+// PruneBatchBefore deletes up to batch of the packets received before cutoff and reports how many went.
+func (r *PacketRepo) PruneBatchBefore(ctx context.Context, cutoff time.Time, batch int) (int64, error) {
+	res, err := r.db.ExecContext(ctx,
+		"DELETE FROM packets WHERE id IN (SELECT id FROM packets WHERE received_at < ? LIMIT ?)",
+		cutoff.UnixMilli(), batch)
 	if err != nil {
-		return 0, fmt.Errorf("reading oldest packets: %w", err)
+		return 0, fmt.Errorf("pruning packets: %w", err)
 	}
-	defer rows.Close()
-	now := time.Now()
-	var old []any
-	n, done := 0, false
-	for rows.Next() {
-		var at time.Time
-		if err := rows.Scan(&next, &at); err != nil {
-			return 0, fmt.Errorf("scanning packet age: %w", err)
-		}
-		n++
-		// Stamped in the future by a clock that was wrong: stepping past it keeps one bad row from ending every prune.
-		if at.After(now) {
-			continue
-		}
-		if !at.Before(cutoff) {
-			done = true
-			break
-		}
-		old = append(old, next)
-	}
-	if err := rows.Err(); err != nil {
-		return 0, fmt.Errorf("iterating packet ages: %w", err)
-	}
-	rows.Close()
-	if len(old) > 0 {
-		q := "DELETE FROM packets WHERE id IN (?" + strings.Repeat(",?", len(old)-1) + ")"
-		if _, err := r.db.ExecContext(ctx, q, old...); err != nil {
-			return 0, fmt.Errorf("pruning packets: %w", err)
-		}
-	}
-	if done || n < batch {
-		return 0, nil
-	}
-	return next, nil
+	return res.RowsAffected()
 }
 
 // ScanFloodRxSince calls fn, newest first, for each non-trace RX flood packet (the ones with a relay path) since cutoff.
@@ -169,20 +137,17 @@ func (r *PacketRepo) ScanFloodRxSince(ctx context.Context, cutoff time.Time, fn 
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, received_at, raw, route_type, payload_type, snr, rssi, packet_hash
 		FROM packets
-		WHERE direction = 'rx' AND route_type IN (?, ?) AND payload_type != ?
-		ORDER BY id DESC`,
-		meshcore.RouteTypeFlood, meshcore.RouteTypeTransportFlood, meshcore.PayloadTypeTrace)
+		WHERE direction = 'rx' AND route_type IN (?, ?) AND payload_type != ? AND received_at >= ?
+		ORDER BY received_at DESC, id DESC`,
+		meshcore.RouteTypeFlood, meshcore.RouteTypeTransportFlood, meshcore.PayloadTypeTrace, cutoff.UnixMilli())
 	if err != nil {
 		return fmt.Errorf("querying packets: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		p := PacketRecord{Direction: "rx"}
-		if err := rows.Scan(&p.ID, &p.ReceivedAt, &p.Raw, &p.RouteType, &p.PayloadType, &p.SNR, &p.RSSI, &p.PacketHash); err != nil {
+		if err := rows.Scan(&p.ID, unixMS(&p.ReceivedAt), &p.Raw, &p.RouteType, &p.PayloadType, &p.SNR, &p.RSSI, &p.PacketHash); err != nil {
 			return fmt.Errorf("scanning packet row: %w", err)
-		}
-		if p.ReceivedAt.Before(cutoff) {
-			break
 		}
 		fn(&p)
 	}
@@ -192,23 +157,18 @@ func (r *PacketRepo) ScanFloodRxSince(ctx context.Context, cutoff time.Time, fn 
 // SentSince maps each packet hash we transmitted since cutoff to whether we started it (an empty path) rather than only relayed it.
 func (r *PacketRepo) SentSince(ctx context.Context, cutoff time.Time) (map[string]bool, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT received_at, packet_hash, path = '' FROM packets
-		WHERE direction = 'tx' AND packet_hash != ''
-		ORDER BY id DESC`)
+		SELECT packet_hash, path = '' FROM packets
+		WHERE direction = 'tx' AND packet_hash != '' AND received_at >= ?`, cutoff.UnixMilli())
 	if err != nil {
 		return nil, fmt.Errorf("querying sent packets: %w", err)
 	}
 	defer rows.Close()
 	sent := map[string]bool{}
 	for rows.Next() {
-		var at time.Time
 		var hash string
 		var started bool
-		if err := rows.Scan(&at, &hash, &started); err != nil {
+		if err := rows.Scan(&hash, &started); err != nil {
 			return nil, fmt.Errorf("scanning sent packet: %w", err)
-		}
-		if at.Before(cutoff) {
-			break
 		}
 		sent[hash] = sent[hash] || started
 	}
