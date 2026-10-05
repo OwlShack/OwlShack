@@ -41,6 +41,13 @@ top until tagged.
   restoring an older backup upgraded it without a copy, and the copy left from the update held the
   database from before the restore, so going back to the older version brought back the wrong
   data.
+- **The MQTT page shows each broker as it is now.** A broker that had gone down still read
+  Connected while it tried to reconnect, and a broker that was working showed an error from hours
+  or days before, such as the session a token refresh replaced. Now a broker that is down reads
+  as down with its error, and one that is connected shows no error unless that connection has one.
+- **Your observer no longer flickers offline every 8 minutes.** Renewing a broker's login made
+  the broker announce the observer as offline, and could lose the packets sent at that moment, so
+  maps could show it offline for up to 5 minutes at a time. Renewing is now seamless.
 
 ## v1.5.0 - 2026-10-01
 
