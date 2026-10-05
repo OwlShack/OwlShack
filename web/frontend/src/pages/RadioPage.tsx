@@ -72,7 +72,7 @@ export function RadioPage() {
     setPathHashSize(String(settings.pathHashSize ?? 1));
     setDutyCycle(settings.dutyCycle != null ? String(settings.dutyCycle) : "");
     setLogLevel(settings.logLevel ?? "info");
-    setPacketDays(settings.packetRetentionDays != null ? String(settings.packetRetentionDays) : "");
+    setPacketDays(String(settings.packetRetentionDays));
   }, [settings]);
 
   // Fetched once on mount: the list is compiled into the binary, so it cannot
@@ -112,8 +112,7 @@ export function RadioPage() {
         pathHashSize: parseInt(pathHashSize, 10) || 1,
         dutyCycle: dutyCycle.trim() === "" ? null : Number(dutyCycle),
         logLevel: logLevel || null,
-        // Blank keeps what is stored; the server has no "reset to default" for it.
-        ...(packetDays.trim() === "" ? {} : { packetRetentionDays: parseInt(packetDays, 10) }),
+        packetRetentionDays: Number(packetDays),
         // setupComplete omitted on purpose: the server keeps the stored value.
       });
       toast.success("Radio settings saved");
@@ -273,8 +272,8 @@ export function RadioPage() {
                 label="Packet history (days)"
                 value={packetDays}
                 onChange={setPacketDays}
-                placeholder="7"
-                hint="how long the packet log and Connection Web keep data · 1-365 · lowering it deletes older packets within the hour, and they cannot be recovered"
+                type="number"
+                hint="how long the packet log and the map's Connections mode keep data · 1-365 · lowering it deletes older packets within the hour, and they cannot be recovered"
               />
               <SelectField
                 label="Map tiles"

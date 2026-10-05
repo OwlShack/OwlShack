@@ -64,6 +64,9 @@ func or[T any](p, d *T) *T {
 }
 
 func (b *backend) SaveSettings(ctx context.Context, in api.SettingsInput) error {
+	if in.PacketRetentionDays == nil {
+		return errors.New("packetRetentionDays is required")
+	}
 	def := config.DefaultConfig()
 	var row store.Settings
 	return b.configMutate(ctx,
@@ -101,8 +104,7 @@ func (b *backend) SaveSettings(ctx context.Context, in api.SettingsInput) error 
 				ModemToken:     or(in.ModemToken, prevToken),
 				PathHashSize:   in.PathHashSize,
 				DutyCyclePct:   in.DutyCycle,
-				// Omitted keeps the stored value, so the setup wizard's settings save never resets it.
-				PacketRetentionDays: or(in.PacketRetentionDays, rows.settings.PacketRetentionDays),
+				PacketRetentionDays: *in.PacketRetentionDays,
 				SetupComplete:       setup,
 			}
 			rows.settings = &row

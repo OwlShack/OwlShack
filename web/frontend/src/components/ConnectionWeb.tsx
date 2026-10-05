@@ -1,17 +1,5 @@
-import {
-  useCallback,
-  useDeferredValue,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
-import L from "leaflet";
-import { RefreshCw, TriangleAlert, X } from "lucide-react";
-import { toast } from "sonner";
-import { useApiObject } from "@/hooks/useApiObject";
-import { useWebSocket } from "@/hooks/useWebSocket";
-import { useResume } from "@/lib/resume";
+import { useMemo, useState } from "react";
+import { TriangleAlert, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -26,18 +14,8 @@ import {
   SheetDescription,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { LoadErrorAlert } from "@/components/LoadErrorAlert";
-import { PageHeader } from "@/components/PageHeader";
-import { HeaderButton } from "@/components/HeaderButton";
-import { PEER_TYPE_HEX } from "@/components/StatusIndicator";
-import { snrFill, snrTextClass } from "@/components/SignalStrength";
-import { originIcon } from "@/components/DiscoverMap";
-import {
-  peerLatLon,
-  themeTileLayer,
-  useThemeTiles,
-  wrapLon,
-} from "@/lib/leaflet";
+import { snrTextClass } from "@/components/SignalStrength";
+import { peerLatLon } from "@/lib/leaflet";
 import { timeAgo } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import {
@@ -45,457 +23,178 @@ import {
   type WebLink,
   type WebNode,
   type WebNeighbour,
-  foldLinks,
   isUncertain,
+  km,
   linkKey,
-  pinHop,
+  located,
+  nodeName,
   nodeNeighbours,
+  pct,
   SELF_ID,
-  unpinHop,
 } from "@/lib/connectionWeb";
+import { NOT_MEASURED, type ConnectionWebState } from "@/hooks/useConnectionWeb";
 
-const WINDOWS = [
-  { hours: 1, label: "1h" },
-  { hours: 6, label: "6h" },
-  { hours: 24, label: "24h" },
-  { hours: 72, label: "3d" },
-  { hours: 168, label: "7d" },
-  { hours: 720, label: "30d" },
-];
 // Slider max, as a percent of the busiest link: relative, so it thins a quiet hour and a busy week alike.
 const MAX_HIDE_PCT = 25;
-// The page reads the packet log, not the radio, so following live traffic costs no airtime.
-const REFETCH_MS = 60_000;
 // A relay beside us can sit on hundreds of routes; rendering them all at once froze the sheet.
 const ROUTES_PAGE = 10;
-const NOT_MEASURED = "var(--muted-foreground)";
-// Dash then gap; the flow animation in index.css shifts by exactly this period.
-const LINK_DASH = "10 8";
 
-type Selection =
-  { kind: "link"; a: string; b: string } | { kind: "node"; id: string } | null;
+const PILL =
+  "inline-flex items-center gap-1.5 border border-border bg-card px-2 py-1 font-mono text-[10px] uppercase tracking-[0.12em] transition-all hover:border-foreground/40";
 
-function dotIcon(color: string, ambiguous: boolean): L.DivIcon {
-  const ring = ambiguous
-    ? "outline:2px dashed var(--foreground);outline-offset:3px;"
-    : "";
-  return L.divIcon({
-    className: "meshcore-web-dot",
-    html: `<span style="display:grid;place-items:center;width:24px;height:24px;"><span style="display:block;width:12px;height:12px;border-radius:9999px;background:${color};box-shadow:0 0 0 2px rgba(0,0,0,0.55);${ring}"></span></span>`,
-    iconSize: [24, 24],
-    iconAnchor: [12, 12],
-  });
-}
-
-const ORIGIN_ICON = originIcon();
-
-const located = (n: { lat: number; lon: number } | undefined) =>
-  !!n && (n.lat !== 0 || n.lon !== 0);
-const pct = (v: number) => `${Math.round(v * 100)}%`;
-
-function km(a: [number, number] | null, b: [number, number] | null): string {
-  if (!a || !b) return "unknown";
-  const d = L.latLng(a).distanceTo(L.latLng(b)) / 1000;
-  return `${d < 10 ? d.toFixed(1) : Math.round(d)} km`;
-}
-
-export function ConnectionWebPage() {
-  const [hours, setHours] = useState(24);
-  // Starts strict: unfiltered, a busy mesh is a tangle of one-off links.
-  const [minShare, setMinShare] = useState(0.1);
-  const [via, setVia] = useState<string | null>(null);
-  const [selection, setSelection] = useState<Selection>(null);
-
-  const {
-    item: web,
-    loading,
-    error,
-    reload,
-  } = useApiObject<ConnectionWeb>(
-    `/api/connection-web?hours=${hours}`,
-    "Failed to load the connection web",
-  );
-  useResume(reload);
-
-  const pending = useRef<number | null>(null);
-  const handleMessage = useCallback(
-    (topic: string) => {
-      if (topic !== "packets" || pending.current != null) return;
-      pending.current = window.setTimeout(() => {
-        pending.current = null;
-        reload();
-      }, REFETCH_MS);
-    },
-    [reload],
-  );
-  useEffect(() => () => window.clearTimeout(pending.current ?? undefined), []);
-  useWebSocket(["packets"], handleMessage);
-
-  const nodes = useMemo(() => {
-    const m = new Map<string, WebNode>();
-    for (const n of web?.nodes ?? []) m.set(n.id, n);
-    return m;
-  }, [web]);
-  const chains = useMemo(() => web?.chains ?? [], [web]);
-  const links = useMemo(
-    () => foldLinks(chains, via ?? undefined),
-    [chains, via],
-  );
-
-  // One line per node pair, dashes flowing in the busier direction.
-  const allPairs = useMemo(() => {
-    const out = new Map<
-      string,
-      {
-        a: string;
-        b: string;
-        count: number;
-        heavier: number;
-        share: number;
-        snr: number | null;
-      }
-    >();
-    for (const l of links.values()) {
-      const key = linkKey(...([l.from, l.to].sort() as [string, string]));
-      const p = out.get(key) ?? {
-        a: l.from,
-        b: l.to,
-        count: 0,
-        heavier: 0,
-        share: 0,
-        snr: null,
-      };
-      p.count += l.count;
-      p.share = Math.max(p.share, l.shareOut);
-      if (l.count > p.heavier) {
-        p.heavier = l.count;
-        p.a = l.from;
-        p.b = l.to;
-      }
-      if (l.snrN > 0) p.snr = l.snrSum / l.snrN;
-      out.set(key, p);
-    }
-    return [...out.values()];
-  }, [links]);
-
-  // Deferred so dragging the slider stays smooth while a large mesh redraws behind it.
-  const filterShare = useDeferredValue(minShare);
-  const pairs = useMemo(() => {
-    const busiest = Math.max(...allPairs.map((p) => p.count), 0);
-    return allPairs.filter((p) => p.count >= filterShare * busiest);
-  }, [allPairs, filterShare]);
-
-  const shownNodeIds = useMemo(() => {
-    const s = new Set<string>();
-    for (const p of pairs) {
-      s.add(p.a);
-      s.add(p.b);
-    }
-    s.delete(SELF_ID);
-    return s;
-  }, [pairs]);
-
-  const { unplaced, uncertain } = useMemo(() => {
-    const shown = [...shownNodeIds]
-      .map((id) => nodes.get(id))
-      .filter((n): n is WebNode => !!n)
-      .sort((a, b) => b.observations - a.observations);
-    return {
-      unplaced: shown.filter((n) => !located(n)),
-      uncertain: shown.filter(isUncertain),
-    };
-  }, [shownNodeIds, nodes]);
-
-  const openNode = useCallback((id: string) => {
-    // Every route ends at us, so filtering the map by "you" would hide nothing.
-    setVia(id === SELF_ID ? null : id);
-    setSelection({ kind: "node", id });
-  }, []);
-
-  // pubkey: a candidate, null = "none of these", undefined = automatic; the sheet and filter follow the new id.
-  const repin = useCallback(
-    async (oldId: string, hash: string, pubkey: string | null | undefined) => {
-      try {
-        if (pubkey === undefined) await unpinHop(hash);
-        else await pinHop(hash, pubkey);
-      } catch (e) {
-        toast.error(
-          `Could not change the match: ${e instanceof Error ? e.message : "error"}`,
-        );
-        return;
-      }
-      const newId = pubkey === undefined ? null : (pubkey ?? `h:${hash}`);
-      setVia((v) => (v === oldId ? newId : v));
-      setSelection(newId ? { kind: "node", id: newId } : null);
-      reload();
-    },
-    [reload],
-  );
-
-  const totalObservations = useMemo(
-    () => chains.reduce((s, c) => s + c.count, 0),
-    [chains],
-  );
-
-  const posOf = useCallback(
-    (id: string): [number, number] | null => {
-      // Wrapped like every peer: a configured -185 is 175E, and unwrapped it lands a world copy away.
-      if (id === SELF_ID)
-        return web?.self ? [web.self.lat, wrapLon(web.self.lon)] : null;
-      const n = nodes.get(id);
-      return located(n) ? peerLatLon(n!.lat, n!.lon) : null;
-    },
-    [nodes, web],
-  );
-
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const mapRef = useRef<L.Map | null>(null);
-  const tileLayerRef = useRef<L.TileLayer | null>(null);
-  const layerRef = useRef<L.LayerGroup | null>(null);
-  const fittedRef = useRef(false);
-
-  useEffect(() => {
-    if (!containerRef.current || mapRef.current) return;
-    const map = L.map(containerRef.current, {
-      center: [0, 0],
-      zoom: 2,
-      worldCopyJump: true,
-    });
-    tileLayerRef.current = themeTileLayer().addTo(map);
-    layerRef.current = L.layerGroup().addTo(map);
-    mapRef.current = map;
-    return () => {
-      map.remove();
-      mapRef.current = null;
-      tileLayerRef.current = null;
-      layerRef.current = null;
-      fittedRef.current = false;
-    };
-  }, []);
-
-  useThemeTiles(mapRef, tileLayerRef);
-
-  // Full clear-and-redraw: a refetch replaces every number, so there is nothing to diff against.
-  useEffect(() => {
-    const map = mapRef.current;
-    const layer = layerRef.current;
-    if (!map || !layer) return;
-    layer.clearLayers();
-
-    // Log-scale brightness: one busy link can out-count the rest of the mesh combined.
-    const busiest = Math.max(...pairs.map((p) => p.count), 1);
-    const drawn = [...pairs].sort((x, y) => x.share - y.share);
-    for (const p of drawn) {
-      const a = posOf(p.a);
-      const b = posOf(p.b);
-      if (!a || !b) continue;
-      const weight = 1.5 + 5 * p.share;
-      L.polyline([a, b], {
-        color: p.snr != null ? snrFill(p.snr) : NOT_MEASURED,
-        weight,
-        opacity: 0.25 + 0.65 * (Math.log(p.count + 1) / Math.log(busiest + 1)),
-        dashArray: LINK_DASH,
-        // Round caps would swell each dash into a bead on a wide line.
-        lineCap: "butt",
-        className: "meshcore-web-link",
-        interactive: false,
-      }).addTo(layer);
-      // An invisible wide twin is the tap target: the drawn line can be 2px on a phone.
-      L.polyline([a, b], {
-        color: "#000",
-        opacity: 0,
-        weight: Math.max(16, weight + 12),
-      })
-        .on("click", () => setSelection({ kind: "link", a: p.a, b: p.b }))
-        .addTo(layer);
-    }
-
-    const points: [number, number][] = [];
-    for (const id of shownNodeIds) {
-      const n = nodes.get(id);
-      const at = posOf(id);
-      if (!n || !at) continue;
-      points.push(at);
-      L.marker(at, {
-        icon: dotIcon(
-          PEER_TYPE_HEX[n.type ?? ""] ?? PEER_TYPE_HEX.NONE,
-          isUncertain(n),
-        ),
-      })
-        .bindTooltip(nodeName(n))
-        .on("click", () => openNode(id))
-        .addTo(layer);
-    }
-    const self = posOf(SELF_ID);
-    if (self) {
-      points.push(self);
-      L.marker(self, { icon: ORIGIN_ICON, zIndexOffset: 1000 })
-        .bindTooltip("You")
-        .on("click", () => openNode(SELF_ID))
-        .addTo(layer);
-    }
-
-    if (!fittedRef.current && points.length > 0) {
-      map.fitBounds(L.latLngBounds(points), { padding: [40, 40], maxZoom: 12 });
-      fittedRef.current = true;
-    }
-  }, [pairs, shownNodeIds, nodes, posOf, openNode]);
-
-  const windows = useMemo(() => {
-    const max = (web?.retentionDays ?? 7) * 24;
-    const opts = WINDOWS.filter((w) => w.hours < max);
-    return [...opts, { hours: max, label: `all (${max / 24}d)` }];
-  }, [web?.retentionDays]);
-
+// The Connections mode's half of the Map toolbar.
+export function ConnectionControls({
+  cw,
+  ownEchoes,
+  onOwnEchoes,
+}: {
+  cw: ConnectionWebState;
+  ownEchoes: boolean;
+  onOwnEchoes: (on: boolean) => void;
+}) {
   return (
-    <div className="space-y-6">
-      <PageHeader
-        title="Connection Web"
-        meta={
-          <span className="font-mono text-sm text-muted-foreground tabular-nums">
-            {totalObservations} packets · {chains.length} routes
-          </span>
-        }
-        actions={
-          <HeaderButton icon={RefreshCw} busy={loading} onClick={reload}>
-            {loading ? "refreshing" : "refresh"}
-          </HeaderButton>
-        }
-      />
-
-      {error && <LoadErrorAlert message={error} onRetry={reload} />}
-      {web && !web.self && (
-        <p className="panel px-4 py-3 font-mono text-xs text-muted-foreground">
-          Set a position on your repeater or companion. The page then draws the
-          links into you.
-        </p>
-      )}
-
-      <section className="panel overflow-hidden">
-        <div className="flex flex-wrap items-center gap-3 border-b border-border px-4 py-3">
-          <label className="flex items-center gap-2">
-            <span className="label-overline">Window</span>
-            <Select
-              value={String(hours)}
-              onValueChange={(v) => setHours(Number(v))}
-            >
-              <SelectTrigger
-                size="sm"
-                className="w-28 rounded-none font-mono text-xs"
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent className="rounded-none font-mono text-xs">
-                {windows.map((w) => (
-                  <SelectItem
-                    key={w.hours}
-                    value={String(w.hours)}
-                    className="rounded-none font-mono text-xs"
-                  >
-                    {w.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </label>
-          <label className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <span className="label-overline whitespace-nowrap">Hide under</span>
-            <input
-              type="range"
-              min={0}
-              max={MAX_HIDE_PCT}
-              step={0.5}
-              value={minShare * 100}
-              onChange={(e) => setMinShare(Number(e.target.value) / 100)}
-              aria-label="Hide links carrying less than this percent of the busiest link"
-              className="w-32 accent-primary"
-            />
-            <span className="w-10 text-right font-mono text-xs tabular-nums">
-              {+(minShare * 100).toFixed(1)}%
-            </span>
-            <span className="label-overline whitespace-nowrap">
-              of busiest · {pairs.length}/{allPairs.length} links
-            </span>
-          </label>
-          {via && (
-            <button
-              type="button"
-              onClick={() => setVia(null)}
-              className="inline-flex items-center gap-1.5 border border-primary/60 px-2 py-1 font-mono text-[10px] uppercase tracking-[0.12em] text-primary"
-            >
-              routes from {nodeName(nodes.get(via), via)}
-              <X className="size-3" />
-            </button>
-          )}
-          <Legend />
-        </div>
-
-        <div
-          ref={containerRef}
-          className="h-[calc(100dvh-300px-var(--bottom-nav))] min-h-105 w-full"
-        />
-
-        <NodeListDetails
-          nodes={uncertain}
-          summary={`${uncertain.length} hop${uncertain.length === 1 ? "" : "s"} matching more than one repeater (check these)`}
-          name={(n) => `${nodeName(n)} · hash ${n.hash?.toUpperCase()}`}
-          detail={(n) =>
-            `${n.candidates.length} matches · ${n.observations} pkts`
-          }
-          onOpen={openNode}
-        />
-        <NodeListDetails
-          nodes={unplaced}
-          summary={`${unplaced.length} relay${unplaced.length === 1 ? "" : "s"} with no position (not drawn)`}
-          name={nodeName}
-          detail={(n) => `${n.observations} pkts`}
-          onOpen={openNode}
-        />
-      </section>
-
-      <Sheet
-        open={selection != null}
-        onOpenChange={(open) => !open && setSelection(null)}
-      >
-        <SheetContent
-          side="right"
-          className="w-full max-w-[100vw] overflow-y-auto border-l border-border bg-card p-0 sm:max-w-md"
+    <>
+      <label className="flex items-center gap-2">
+        <span className="label-overline">Window</span>
+        <Select
+          value={String(cw.hours)}
+          onValueChange={(v) => cw.setHours(Number(v))}
         >
-          <SheetTitle className="sr-only">Connection detail</SheetTitle>
-          <SheetDescription className="sr-only">
-            Statistics for the selected link or node.
-          </SheetDescription>
-          {selection?.kind === "link" && (
-            <LinkDetail
-              a={selection.a}
-              b={selection.b}
-              links={links}
-              nodes={nodes}
-              posOf={posOf}
-              onOpenNode={openNode}
-            />
-          )}
-          {selection?.kind === "node" && web && (
-            <NodeDetail
-              key={selection.id}
-              id={selection.id}
-              web={web}
-              nodes={nodes}
-              self={posOf(SELF_ID)}
-              onRepin={repin}
-              onOpenNode={openNode}
-            />
-          )}
-        </SheetContent>
-      </Sheet>
-    </div>
+          <SelectTrigger
+            size="sm"
+            className="w-28 rounded-none font-mono text-xs"
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent className="rounded-none font-mono text-xs">
+            {cw.windows.map((w) => (
+              <SelectItem
+                key={w.hours}
+                value={String(w.hours)}
+                className="rounded-none font-mono text-xs"
+              >
+                {w.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </label>
+      <label className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="label-overline whitespace-nowrap">Hide under</span>
+        <input
+          type="range"
+          min={0}
+          max={MAX_HIDE_PCT}
+          step={0.5}
+          value={cw.minShare * 100}
+          onChange={(e) => cw.setMinShare(Number(e.target.value) / 100)}
+          aria-label="Hide links carrying less than this percent of the busiest link"
+          className="w-32 accent-primary"
+        />
+        <span className="w-10 text-right font-mono text-xs tabular-nums">
+          {+(cw.minShare * 100).toFixed(1)}%
+        </span>
+        <span className="label-overline whitespace-nowrap">
+          of busiest · {cw.shownLinks}/{cw.totalLinks} links
+        </span>
+      </label>
+      <button
+        type="button"
+        aria-pressed={ownEchoes}
+        onClick={() => onOwnEchoes(!ownEchoes)}
+        title="Count your own messages and adverts when other repeaters relay them back to you"
+        className={cn(
+          PILL,
+          ownEchoes ? "border-primary/60 text-primary" : "text-muted-foreground",
+        )}
+      >
+        my packets
+      </button>
+      {cw.via && (
+        <button
+          type="button"
+          onClick={() => cw.setVia(null)}
+          className={cn(PILL, "border-primary/60 text-primary")}
+        >
+          routes from {nodeName(cw.nodes.get(cw.via), cw.via)}
+          <X className="size-3" />
+        </button>
+      )}
+    </>
   );
 }
 
-function nodeName(n: WebNode | undefined, id?: string): string {
-  if (id === SELF_ID) return "You";
-  if (!n) return id ?? "?";
-  return n.name || (n.hash ? `hash ${n.hash.toUpperCase()}` : n.id.slice(0, 8));
+// Below the map: the key, the hops worth checking and the relays the map cannot place.
+export function ConnectionLists({ cw }: { cw: ConnectionWebState }) {
+  const { uncertain, unplaced } = cw;
+  return (
+    <>
+      <Legend />
+      <NodeListDetails
+        nodes={uncertain}
+        summary={`${uncertain.length} hop${uncertain.length === 1 ? "" : "s"} matching more than one repeater (check these)`}
+        name={(n) => `${nodeName(n)} · hash ${n.hash?.toUpperCase()}`}
+        detail={(n) => `${n.candidates.length} matches · ${n.observations} pkts`}
+        onOpen={cw.openNode}
+      />
+      <NodeListDetails
+        nodes={unplaced}
+        summary={`${unplaced.length} relay${unplaced.length === 1 ? "" : "s"} with no position (not drawn)`}
+        name={nodeName}
+        detail={(n) => `${n.observations} pkts`}
+        onOpen={cw.openNode}
+      />
+    </>
+  );
+}
+
+// onOpenPeer hands a node over to the Map's own peer sheet.
+export function ConnectionSheet({
+  cw,
+  onOpenPeer,
+}: {
+  cw: ConnectionWebState;
+  onOpenPeer: (pubkey: string) => void;
+}) {
+  const { selection, web } = cw;
+  return (
+    <Sheet
+      open={selection != null}
+      onOpenChange={(open) => !open && cw.setSelection(null)}
+    >
+      <SheetContent
+        side="right"
+        className="w-full max-w-[100vw] overflow-y-auto border-l border-border bg-card p-0 sm:max-w-md"
+      >
+        <SheetTitle className="sr-only">Connection detail</SheetTitle>
+        <SheetDescription className="sr-only">
+          Statistics for the selected link or node.
+        </SheetDescription>
+        {selection?.kind === "link" && (
+          <LinkDetail
+            a={selection.a}
+            b={selection.b}
+            links={cw.links}
+            nodes={cw.nodes}
+            posOf={cw.posOf}
+            onOpenNode={cw.openNode}
+          />
+        )}
+        {selection?.kind === "node" && web && (
+          <NodeDetail
+            key={selection.id}
+            id={selection.id}
+            web={web}
+            nodes={cw.nodes}
+            self={cw.posOf(SELF_ID)}
+            onRepin={cw.repin}
+            onOpenNode={cw.openNode}
+            onOpenPeer={onOpenPeer}
+          />
+        )}
+      </SheetContent>
+    </Sheet>
+  );
 }
 
 function NodeListDetails({
@@ -547,7 +246,7 @@ function Legend() {
     </span>
   );
   return (
-    <div className="ml-auto flex flex-wrap items-center gap-3 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border px-4 py-3 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
       <span>width = how often a node picks this hop</span>
       <span>brightness = packets carried</span>
       <span>dashes move toward the receiver</span>
@@ -710,6 +409,7 @@ function NodeDetail({
   self,
   onRepin,
   onOpenNode,
+  onOpenPeer,
 }: {
   id: string;
   web: ConnectionWeb;
@@ -721,6 +421,7 @@ function NodeDetail({
     pubkey: string | null | undefined,
   ) => Promise<void>;
   onOpenNode: (id: string) => void;
+  onOpenPeer: (pubkey: string) => void;
 }) {
   const n = nodes.get(id);
   const { feeding, reaching } = useMemo(
@@ -750,6 +451,16 @@ function NodeDetail({
             </>
           )}
         </p>
+        {n && !n.id.startsWith("h:") && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onOpenPeer(n.id)}
+            className="mt-2 rounded-none font-mono text-[10px] uppercase tracking-[0.12em]"
+          >
+            peer details
+          </Button>
+        )}
       </div>
       {n?.hash && (
         <section className="space-y-2 border-t border-border pt-3">

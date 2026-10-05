@@ -44,8 +44,8 @@ type Settings struct {
 	PathHashSize *int // default flood path hash width in bytes; nil = 1
 	// DutyCyclePct caps TX airtime per hour as a percentage; nil = library default (50%).
 	DutyCyclePct *float64
-	// PacketRetentionDays is how long the packet log keeps rows; nil = DefaultPacketRetentionDays.
-	PacketRetentionDays *int
+	// PacketRetentionDays is how long the packet log keeps rows, 1-365; the column is NOT NULL and CHECKed.
+	PacketRetentionDays int
 	SetupComplete       bool
 }
 
@@ -66,12 +66,12 @@ func (r *SettingsRepo) Get(ctx context.Context) (*Settings, error) {
 	return &s, nil
 }
 
-// PacketRetentionDays is the stored setting, or DefaultPacketRetentionDays when unset or unreadable.
-func (r *SettingsRepo) PacketRetentionDays(ctx context.Context) int {
-	if s, err := r.Get(ctx); err == nil && s.PacketRetentionDays != nil {
-		return *s.PacketRetentionDays
+func (r *SettingsRepo) PacketRetentionDays(ctx context.Context) (int, error) {
+	var days int
+	if err := r.db.QueryRowContext(ctx, "SELECT packet_retention_days FROM settings WHERE id = 1").Scan(&days); err != nil {
+		return 0, fmt.Errorf("reading packet retention: %w", err)
 	}
-	return DefaultPacketRetentionDays
+	return days, nil
 }
 
 func (r *SettingsRepo) Set(ctx context.Context, s *Settings) error {

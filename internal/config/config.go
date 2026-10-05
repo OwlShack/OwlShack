@@ -113,7 +113,7 @@ type Config struct {
 	// PERCENTAGE, as the firmware's `set dutycycle` takes it; the library's inverted airtime factor is derived in AirtimeFactorOr. nil = 50%.
 	DutyCycle *float64 `json:"dutyCycle,omitempty" yaml:"dutyCycle,omitempty" toml:"dutyCycle,omitempty"`
 
-	// Days the packet log keeps received and sent packets; nil = 7.
+	// Days the packet log keeps received and sent packets, 1-365; nil in a file = DefaultPacketRetentionDays.
 	PacketRetentionDays *int `json:"packetRetentionDays,omitempty" yaml:"packetRetentionDays,omitempty" toml:"packetRetentionDays,omitempty"`
 
 	// nil/false until the first-run wizard finishes: tells "never configured" from "deliberately observer-only".
@@ -175,6 +175,17 @@ func (c *Config) MapDarkStyleOr() string {
 }
 
 // MapProviderOr is the basemap to store, choosing for a config file that predates the field as migration 019 does.
+// DefaultPacketRetentionDays matches the column default migration 022 stamps.
+const DefaultPacketRetentionDays = 7
+
+// PacketRetentionDaysOr fills the default for a config file that omits it.
+func (c *Config) PacketRetentionDaysOr() int {
+	if c.PacketRetentionDays != nil {
+		return *c.PacketRetentionDays
+	}
+	return DefaultPacketRetentionDays
+}
+
 func (c *Config) MapProviderOr() string {
 	switch {
 	case c.MapProvider != nil:

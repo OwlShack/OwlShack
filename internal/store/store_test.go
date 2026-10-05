@@ -784,6 +784,7 @@ func TestPacketRepo_ListFilter(t *testing.T) {
 }
 
 // received_at is host-zone text, so a SQL-text compare would be off by the UTC offset; +13h spans every window here.
+// The oldest row is stamped an hour ahead, as a clock set wrong then corrected leaves it; it must not end the prune.
 func TestPacketRepo_PruneBatchBeforeAcrossZones(t *testing.T) {
 	t.Parallel()
 	st := newTestStore(t)
@@ -792,7 +793,7 @@ func TestPacketRepo_PruneBatchBeforeAcrossZones(t *testing.T) {
 	nz := time.FixedZone("NZDT", 13*3600)
 	now := time.Now()
 	cutoff := now.Add(-2 * time.Hour)
-	ages := []time.Duration{5 * time.Hour, 3 * time.Hour, 90 * time.Minute, 10 * time.Minute}
+	ages := []time.Duration{-time.Hour, 5 * time.Hour, 3 * time.Hour, 90 * time.Minute, 10 * time.Minute}
 	for _, age := range ages {
 		raw := []byte{meshcore.MakeHeader(meshcore.RouteTypeFlood, 4, 0), 0x00, 0xDE, 0xAD}
 		rt, pt := meshcore.RouteTypeFlood, uint8(4)
@@ -802,12 +803,12 @@ func TestPacketRepo_PruneBatchBeforeAcrossZones(t *testing.T) {
 		}
 	}
 
-	more, err := st.Packets.PruneBatchBefore(ctx, cutoff, 1)
-	if err != nil || !more {
-		t.Fatalf("first batch of 1: more=%v err=%v, want more=true", more, err)
+	next, err := st.Packets.PruneBatchBefore(ctx, cutoff, 0, 1)
+	if err != nil || next == 0 {
+		t.Fatalf("first batch of 1: next=%d err=%v, want a cursor past the future-stamped row", next, err)
 	}
-	if more, err = st.Packets.PruneBatchBefore(ctx, cutoff, 500); err != nil || more {
-		t.Fatalf("second batch: more=%v err=%v, want more=false", more, err)
+	if next, err = st.Packets.PruneBatchBefore(ctx, cutoff, next, 500); err != nil || next != 0 {
+		t.Fatalf("second batch: next=%d err=%v, want 0 (done)", next, err)
 	}
 
 	var got []time.Time
@@ -816,8 +817,8 @@ func TestPacketRepo_PruneBatchBeforeAcrossZones(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 {
-		t.Fatalf("kept %d packets, want the 2 newer than the cutoff", len(got))
+	if len(got) != 3 {
+		t.Fatalf("kept %d packets, want the 2 newer than the cutoff and the future-stamped one", len(got))
 	}
 	for _, at := range got {
 		if at.Before(cutoff) {
@@ -833,6 +834,38 @@ func TestPacketRepo_PruneBatchBeforeAcrossZones(t *testing.T) {
 	}
 	if len(got) != 1 {
 		t.Errorf("last hour scanned %d packets, want 1", len(got))
+	}
+}
+
+func TestPacketRepo_SentSince(t *testing.T) {
+	t.Parallel()
+	st := newTestStore(t)
+	ctx := t.Context()
+
+	now := time.Now()
+	for _, p := range []struct {
+		age  time.Duration
+		dir  string
+		hash string
+		path string
+	}{
+		{3 * time.Hour, "tx", "aa", ""},
+		{10 * time.Minute, "tx", "bb", "99"}, // relayed
+		{8 * time.Minute, "tx", "dd", ""},    // started
+		{10 * time.Minute, "rx", "cc", ""},
+		{5 * time.Minute, "tx", "", ""}, // unparseable
+	} {
+		rec := &PacketRecord{ReceivedAt: now.Add(-p.age), Direction: p.dir, Raw: []byte{0x00}, PacketHash: p.hash, Path: p.path}
+		if err := st.Packets.Insert(ctx, rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sent, err := st.Packets.SentSince(ctx, now.Add(-2*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if started, ok := sent["bb"]; len(sent) != 2 || !ok || started || !sent["dd"] {
+		t.Errorf("sent = %v, want bb relayed and dd started only", sent)
 	}
 }
 
@@ -923,6 +956,10 @@ func TestStore_UpgradeFromReleasedSchema(t *testing.T) {
 		"INSERT INTO companions (name) VALUES ('upgrade-me')"); err != nil {
 		t.Fatalf("seeding operator data: %v", err)
 	}
+	if _, err := db.ExecContext(t.Context(),
+		"INSERT INTO settings (id, connection_type) VALUES (1, 'kiss')"); err != nil {
+		t.Fatalf("seeding settings: %v", err)
+	}
 	db.Close()
 
 	st, err := Open(t.Context(), path)
@@ -960,6 +997,10 @@ func TestStore_UpgradeFromReleasedSchema(t *testing.T) {
 		if !cols[c] {
 			t.Errorf("settings.%s missing after the upgrade", c)
 		}
+	}
+	// An existing node gets the default rather than a NULL the NOT NULL column cannot hold.
+	if days, err := st.Settings.PacketRetentionDays(t.Context()); err != nil || days != 7 {
+		t.Errorf("packet_retention_days after the upgrade = %d, %v; want 7", days, err)
 	}
 
 	// The sensor slot both creates tables and alters one, so an upgraded database is where a half-applied slot shows.

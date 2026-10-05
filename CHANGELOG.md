@@ -3,6 +3,31 @@
 Notable changes per release. Dates are the tag date; unreleased work sits at the
 top until tagged.
 
+## Unreleased
+
+### Added
+
+- **Connections mode on the Map** (contributed by @ModerateWinGuy in #66). Switch the Map from
+  Peers to Connections to see the routes packets took to reach you. A line's width shows how often
+  a node passes traffic along that hop, its brightness how many packets it carried, and its colour
+  the signal of the last hop into you; the dashes move toward you. Pick a time window, hide the
+  quiet links, and tap a node or link to see its neighbours, which path arrived first, and the
+  signal on each. It reads packets already received, so it never uses airtime.
+- **Say which repeater a hop is.** When several repeaters share a hop's hash, the map picks the
+  one nearest the next hop toward you and marks the hop. From its sheet, pick the right repeater,
+  say it is none of the known ones, or go back to automatic. Your choice is kept.
+- **Your own packets on the map when you want them.** Connections leaves out your own messages
+  and adverts heard back after other repeaters relayed them, so they do not count as traffic
+  reaching you. Turn on "my packets" to include them. Your repeater's relays heard back are always
+  left out.
+
+### Changed
+
+- **The packet log keeps the last 7 days instead of the newest 10,000 packets.** Set 1 to 365
+  days in Settings, Service. A busy mesh keeps more packets than before, so the database can grow
+  larger. Lowering the setting deletes the older packets within the hour, and they cannot be
+  recovered.
+
 ## v1.5.0 - 2026-10-01
 
 Baseline `v1.4.2`. Sensors on the Pi, sent over the mesh; bytes per hop and one Path window for

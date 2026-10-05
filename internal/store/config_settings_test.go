@@ -32,13 +32,13 @@ func TestSettings_RoundTripsEveryColumn(t *testing.T) {
 		ModemToken:          strPtr("s3cret"),
 		PathHashSize:        intPtr2(2),
 		DutyCyclePct:        fltPtr(12.5),
-		PacketRetentionDays: intPtr2(14),
+		PacketRetentionDays: 14,
 		SetupComplete:       true,
 	}
 	// Seed a different row first, so the assertions below run against the UPDATE arm of Set's
 	// upsert. That is the arm every save after the first one takes, and a column left out of the
 	// ON CONFLICT list is invisible to an insert-only test.
-	if err := st.Settings.Set(ctx, &Settings{ConnectionType: "kiss", Connection: strPtr("serial:///dev/ttyACM0")}); err != nil {
+	if err := st.Settings.Set(ctx, &Settings{ConnectionType: "kiss", Connection: strPtr("serial:///dev/ttyACM0"), PacketRetentionDays: 7}); err != nil {
 		t.Fatalf("seed Set: %v", err)
 	}
 	if err := st.Settings.Set(ctx, want); err != nil {
@@ -71,6 +71,9 @@ func TestSettings_RoundTripsEveryColumn(t *testing.T) {
 	if got.MapProvider != want.MapProvider {
 		t.Errorf("mapProvider: got %q, want %q", got.MapProvider, want.MapProvider)
 	}
+	if got.PacketRetentionDays != want.PacketRetentionDays {
+		t.Errorf("packetRetentionDays: got %d, want %d", got.PacketRetentionDays, want.PacketRetentionDays)
+	}
 	if got.ConnectionType != want.ConnectionType {
 		t.Errorf("connectionType: got %q, want %q", got.ConnectionType, want.ConnectionType)
 	}
@@ -83,7 +86,6 @@ func TestSettings_RoundTripsEveryColumn(t *testing.T) {
 		{"cr", want.CR, got.CR},
 		{"tx", want.TX, got.TX},
 		{"pathHashSize", want.PathHashSize, got.PathHashSize},
-		{"packetRetentionDays", want.PacketRetentionDays, got.PacketRetentionDays},
 	} {
 		if c.a == nil || c.b == nil || *c.a != *c.b {
 			t.Errorf("%s: got %v, want %v", c.field, c.b, c.a)
@@ -113,9 +115,10 @@ func TestSettings_SPIBoardStaysNullForKiss(t *testing.T) {
 	ctx := t.Context()
 
 	if err := st.Settings.Set(ctx, &Settings{
-		ConnectionType: "kiss",
-		Connection:     strPtr("serial:///dev/ttyACM0"),
-		Freq:           fltPtr(917.375),
+		ConnectionType:      "kiss",
+		Connection:          strPtr("serial:///dev/ttyACM0"),
+		Freq:                fltPtr(917.375),
+		PacketRetentionDays: 7,
 	}); err != nil {
 		t.Fatalf("Set: %v", err)
 	}
@@ -133,4 +136,23 @@ func deref(s *string) string {
 		return "<nil>"
 	}
 	return *s
+}
+
+// The column refuses what validation should already have caught, so no writer can store a bad retention.
+func TestSettings_PacketRetentionChecked(t *testing.T) {
+	t.Parallel()
+	st := newTestStore(t)
+	ctx := t.Context()
+
+	if _, err := st.db.ExecContext(ctx, "INSERT INTO settings (id, connection_type) VALUES (1, 'kiss')"); err != nil {
+		t.Fatal(err)
+	}
+	if days, err := st.Settings.PacketRetentionDays(ctx); err != nil || days != 7 {
+		t.Fatalf("a row written without it: %d, %v; want the column default 7", days, err)
+	}
+	for _, days := range []int{0, 366} {
+		if err := st.Settings.Set(ctx, &Settings{ConnectionType: "kiss", PacketRetentionDays: days}); err == nil {
+			t.Errorf("Set stored packetRetentionDays %d; the CHECK should refuse it", days)
+		}
+	}
 }

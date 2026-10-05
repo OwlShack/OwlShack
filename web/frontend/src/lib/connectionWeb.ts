@@ -1,7 +1,25 @@
 // Folds the routes /api/connection-web returns into links and per-node route breakdowns.
+import L from "leaflet";
 import { request } from "@/lib/configApi";
 
 export const SELF_ID = "self";
+
+export const located = (n: { lat: number; lon: number } | undefined) =>
+  !!n && (n.lat !== 0 || n.lon !== 0);
+
+export const pct = (v: number) => `${Math.round(v * 100)}%`;
+
+export function km(a: [number, number] | null, b: [number, number] | null): string {
+  if (!a || !b) return "unknown";
+  const d = L.latLng(a).distanceTo(L.latLng(b)) / 1000;
+  return `${d < 10 ? d.toFixed(1) : Math.round(d)} km`;
+}
+
+export function nodeName(n: WebNode | undefined, id?: string): string {
+  if (id === SELF_ID) return "You";
+  if (!n) return id ?? "?";
+  return n.name || (n.hash ? `hash ${n.hash.toUpperCase()}` : n.id.slice(0, 8));
+}
 
 // A repeater whose key starts with a hop's hash, so it could be the node that relayed it.
 export interface WebCandidate {
@@ -43,6 +61,8 @@ export interface WebChain {
 export interface ConnectionWeb {
   self: { lat: number; lon: number } | null;
   hours: number;
+  // Copies of packets we started, heard back after others relayed them, are counted.
+  ownEchoes: boolean;
   retentionDays: number;
   nodes: WebNode[];
   chains: WebChain[];

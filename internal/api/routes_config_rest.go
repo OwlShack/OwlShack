@@ -30,7 +30,7 @@ type settingsDTO struct {
 	PathHashSize   *int     `json:"pathHashSize"`
 	// DutyCycle is a percentage, the unit the firmware's `set dutycycle` takes; null is the default (50%).
 	DutyCycle           *float64 `json:"dutyCycle"`
-	PacketRetentionDays *int     `json:"packetRetentionDays"` // null = 7
+	PacketRetentionDays int      `json:"packetRetentionDays"`
 	SetupComplete       bool     `json:"setupComplete"`
 }
 

@@ -521,7 +521,7 @@ type SettingsInput struct {
 	PathHashSize *int    `json:"pathHashSize"`
 	// DutyCycle is a TX airtime cap percentage (0 < pct <= 100); null means the default, not "keep".
 	DutyCycle *float64 `json:"dutyCycle"`
-	// PacketRetentionDays is how many days of packets to keep; omit = keep the stored value.
+	// PacketRetentionDays is how many days of packets to keep, 1-365; required, so a missing value is refused rather than guessed.
 	PacketRetentionDays *int  `json:"packetRetentionDays"`
 	SetupComplete       *bool `json:"setupComplete"`
 }

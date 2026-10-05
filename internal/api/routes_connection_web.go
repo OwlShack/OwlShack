@@ -62,6 +62,7 @@ type webLatLon struct {
 type connectionWebJSON struct {
 	Self          *webLatLon     `json:"self"`
 	Hours         int            `json:"hours"`
+	OwnEchoes     bool           `json:"ownEchoes"`
 	RetentionDays int            `json:"retentionDays"`
 	Nodes         []webNodeJSON  `json:"nodes"`
 	Chains        []webChainJSON `json:"chains"`
@@ -83,6 +84,8 @@ type webBuilder struct {
 	byPubkey  map[string]*store.Peer
 	repByHash map[string][]*store.Peer // hex prefix of every width 1-3 -> repeaters
 	pins      map[string][]byte        // hash -> the operator's choice; a nil pubkey = none of the known peers
+	sent      map[string]bool          // packet hash we transmitted -> we started it (false = only relayed)
+	ownEchoes bool                     // keep copies of packets we started, heard back after others relayed them
 	nodes     map[string]*webNode
 	chains    map[string]*webChain
 	firstCopy map[string]webFirstCopy // per packet hash
@@ -94,9 +97,9 @@ type webFirstCopy struct {
 	key string
 }
 
-func newWebBuilder(peers []store.Peer, self *webLatLon, relay []byte, pins map[string][]byte) *webBuilder {
+func newWebBuilder(peers []store.Peer, self *webLatLon, relay []byte, pins map[string][]byte, sent map[string]bool) *webBuilder {
 	b := &webBuilder{
-		self: self, relay: relay, pins: pins,
+		self: self, relay: relay, pins: pins, sent: sent,
 		byPubkey:  make(map[string]*store.Peer, len(peers)),
 		repByHash: map[string][]*store.Peer{},
 		nodes:     map[string]*webNode{},
@@ -127,12 +130,16 @@ func (b *webBuilder) add(rec *store.PacketRecord) {
 	if err != nil || !pkt.IsRouteFlood() || pkt.PayloadType() == meshcore.PayloadTypeTrace {
 		return
 	}
+	started, sent := b.sent[rec.PacketHash]
+	if started && !b.ownEchoes {
+		return
+	}
 	size := int(pkt.PathHashSize())
 	hops := make([][]byte, 0, pkt.PathHashCount())
 	for i := 0; size > 0 && i+size <= len(pkt.Path); i += size {
 		hop := pkt.Path[i : i+size]
-		// ponytail: our repeater's hash in the path is our own relay heard back; a foreign repeater sharing it is dropped too.
-		if len(b.relay) >= size && bytes.Equal(hop, b.relay[:size]) {
+		// Our own relay heard back; without the sent check a foreign repeater sharing our hash would vanish too.
+		if sent && len(b.relay) >= size && bytes.Equal(hop, b.relay[:size]) {
 			return
 		}
 		hops = append(hops, hop)
@@ -305,12 +312,24 @@ func haversineKm(lat1, lon1, lat2, lon2 float64) float64 {
 
 func (s *Server) handleConnectionWeb(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	retention := s.store.Settings.PacketRetentionDays(ctx)
+	retention, err := s.store.Settings.PacketRetentionDays(ctx)
+	if err != nil {
+		s.serverError(w, "failed to load packet retention", err)
+		return
+	}
 	hours, _ := strconv.Atoi(r.URL.Query().Get("hours"))
 	if hours <= 0 {
 		hours = 24
 	}
 	hours = min(hours, retention*24)
+	ownEchoes := false
+	if v := r.URL.Query().Get("ownEchoes"); v != "" {
+		var err error
+		if ownEchoes, err = strconv.ParseBool(v); err != nil {
+			writeError(w, http.StatusBadRequest, "ownEchoes must be true or false")
+			return
+		}
+	}
 
 	peers, err := s.store.Peers.LoadAll(ctx)
 	if err != nil {
@@ -349,13 +368,21 @@ func (s *Server) handleConnectionWeb(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, "failed to load hop pins", err)
 		return
 	}
-	b := newWebBuilder(peers, self, relay, pins)
-	if err := s.store.Packets.ScanFloodRxSince(ctx, time.Now().Add(-time.Duration(hours)*time.Hour), b.add); err != nil {
+	since := time.Now().Add(-time.Duration(hours) * time.Hour)
+	// A minute early, so an echo at the window's edge still finds the forward that caused it.
+	sent, err := s.store.Packets.SentSince(ctx, since.Add(-time.Minute))
+	if err != nil {
+		s.serverError(w, "failed to read sent packets", err)
+		return
+	}
+	b := newWebBuilder(peers, self, relay, pins, sent)
+	b.ownEchoes = ownEchoes
+	if err := s.store.Packets.ScanFloodRxSince(ctx, since, b.add); err != nil {
 		s.serverError(w, "failed to read packets", err)
 		return
 	}
 	out := b.result()
-	out.Hours, out.RetentionDays = hours, retention
+	out.Hours, out.RetentionDays, out.OwnEchoes = hours, retention, ownEchoes
 	writeJSON(w, http.StatusOK, out)
 }
 
