@@ -56,6 +56,12 @@ top until tagged.
 - **Packets lost while a broker reconnects count as dropped.** They were counted as published,
   though the broker never got them, so the MQTT page looked healthy through an outage. A status
   update during a reconnect also held up the packets behind it for 5 seconds; it no longer does.
+- **Tapping a map on a phone hits what you tapped.** When part of a map was below the bottom of
+  the screen or a dialog, the first tap scrolled it and landed beside the line or node you aimed
+  at, so nothing opened, and a location or region picker could pick the wrong spot.
+- **Share Location from Map shows its map.** The map in the chat's Share Location dialog never
+  appeared, so you could only share your own position. Each time you open it, it starts from your
+  position again rather than the point you picked last time.
 
 ## v1.5.0 - 2026-10-01
 
