@@ -272,9 +272,12 @@ radio/connection change still restarts everything (modem reconnect);
   without it a broker that was down at startup stayed down until the process
   restarted. The same loop rescues a failed token-refresh reconnect, which
   otherwise stranded the broker until the next refresh tick (0.8 x token
-  lifetime). `doPublish` skips a disconnected client and counts a drop —
-  publishing to one would block for `publishWaitTimeout` per job and stall the
-  worker. Per-broker auth: `token` (Ed25519 JWT from the node
+  lifetime). `doPublish` skips a client without an open connection
+  (`IsConnectionOpen`) and counts a drop: while reconnecting, paho discards a
+  QoS 0 publish yet reports it sent, and holds a QoS 1 one for the full
+  `publishWaitTimeout`, stalling the worker. `retryConnect` keeps
+  `IsConnected`, so it stands aside while paho's own reconnect runs rather than
+  dial a second session on the same ClientID. Per-broker auth: `token` (Ed25519 JWT from the node
   identity, username `v1_<pubkey>`, 10-min lifetime, minted fresh on every connect/reconnect via paho's `CredentialsProvider` plus a refresh tick) or `basic`
   (user/pass). The Add Broker modal has presets (`BROKER_PRESETS` in
   `MqttPage.tsx`) mirroring meshcoretomqtt's: LetsMesh US/EU, Waev A/B,

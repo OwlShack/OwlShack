@@ -574,3 +574,30 @@ func TestBrokerStatus_DownWhileReconnecting(t *testing.T) {
 		t.Errorf("reconnected but the error still reads %q", got)
 	}
 }
+
+// While paho reconnects it takes a QoS 0 publish and discards it, and holds a QoS 1 one until the link is back, so both must count as dropped at once.
+func TestDoPublish_DropsWhileReconnecting(t *testing.T) {
+	addr, port := freePort(t)
+	fb := listenFakeBroker(t, addr)
+	o := testObserver(t)
+	bc := testBrokerClient("b", "127.0.0.1", port, "none")
+	registered(o, bc)
+	c, err := o.connectBroker(bc.cfg, "TST")
+	if err != nil {
+		t.Fatalf("connect to fake broker: %v", err)
+	}
+	bc.swapClient(c)
+	defer c.Disconnect(0)
+
+	fb.drop()
+	waitFor(t, "the loss to be seen", 3*time.Second, func() bool { return brokerError(o) != "" })
+	start := time.Now()
+	o.doPublish(bc, publishJob{topic: "packets", payload: []byte("x"), qos: 0})
+	o.doPublish(bc, publishJob{topic: "status", payload: []byte("x"), qos: 1})
+	if took := time.Since(start); took > time.Second {
+		t.Errorf("publishing while reconnecting took %v, want no wait", took.Round(time.Millisecond))
+	}
+	if p, d := bc.published.Load(), bc.dropped.Load(); p != 0 || d != 2 {
+		t.Errorf("published %d dropped %d, want 0 and 2", p, d)
+	}
+}
