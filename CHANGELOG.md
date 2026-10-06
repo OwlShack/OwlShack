@@ -30,6 +30,11 @@ top until tagged.
 
 ### Fixed
 
+- **Settings that follow the level above show it.** A companion's or your repeater's path hash
+  size, and your repeater's advert scope, showed an empty box when set to inherit or unscoped.
+  They now say what they are set to.
+- **Discover packets are named in the packet log.** Discover requests and answers showed as
+  "Control (flags:80)" and the like; they now read Discover Request and Discover Response.
 - **Messages show when you received them.** Channel messages and room posts showed the time
   by the sender's clock, which can be years out, so a message that had just arrived could show a
   date long past. They now show when they arrived, and a message's Reception paths add the sender's

@@ -62,6 +62,10 @@ export function TextField({
   );
 }
 
+// Radix reads a "" value as "show the placeholder", so an option meaning "none" or "inherit" would render blank.
+const EMPTY = "\u0000empty";
+const toSelect = (v: string) => (v === "" ? EMPTY : v);
+
 export function SelectField({
   label,
   value,
@@ -81,7 +85,7 @@ export function SelectField({
   const known = options.some((o) => o.value === value);
   return (
     <Field label={label} hint={hint}>
-      <Select value={value} onValueChange={onChange} disabled={disabled}>
+      <Select value={toSelect(value)} onValueChange={(v) => onChange(v === EMPTY ? "" : v)} disabled={disabled}>
         <SelectTrigger className="h-9 w-full font-mono text-sm rounded-none border-border bg-background">
           <SelectValue />
         </SelectTrigger>
@@ -92,7 +96,7 @@ export function SelectField({
             </SelectItem>
           )}
           {options.map((o) => (
-            <SelectItem key={o.value} value={o.value} className="font-mono text-sm">
+            <SelectItem key={o.value} value={toSelect(o.value)} className="font-mono text-sm">
               {o.label}
             </SelectItem>
           ))}
