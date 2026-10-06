@@ -113,7 +113,7 @@ func TestTimeColumnsHoldUnixMS(t *testing.T) {
 	if err := st.Contacts.Restore(ctx, &Contact{CompanionID: 1, PeerPubKey: []byte{0xbb}, Name: "r", LastSeen: at, AddedAt: at}); err != nil {
 		t.Fatal(err)
 	}
-	m := &Message{CompanionID: 1, Channel: "Public", Direction: "rx", Timestamp: at}
+	m := &Message{CompanionID: 1, Channel: "Public", Direction: "rx", Timestamp: at, ReceivedAt: at}
 	if err := st.Messages.Insert(ctx, m); err != nil {
 		t.Fatal(err)
 	}
@@ -127,6 +127,7 @@ func TestTimeColumnsHoldUnixMS(t *testing.T) {
 		{"companion_contacts", "last_seen"},
 		{"companion_contacts", "added_at"},
 		{"messages", "timestamp"},
+		{"messages", "received_at"},
 		{"message_echoes", "received_at"},
 	} {
 		rows, err := st.db.QueryContext(ctx, "SELECT typeof("+c.col+"), "+c.col+" FROM "+c.table)

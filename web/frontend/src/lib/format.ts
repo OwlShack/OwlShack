@@ -12,6 +12,7 @@ export function formatDateTime(ts: string | number): string {
   try {
     const d = new Date(ts);
     return d.toLocaleString(undefined, {
+      year: d.getFullYear() === new Date().getFullYear() ? undefined : "numeric",
       month: "short",
       day: "numeric",
       hour: "2-digit",

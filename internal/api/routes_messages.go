@@ -197,6 +197,7 @@ type messageJSON struct {
 	Text         string   `json:"text"`
 	Direction    string   `json:"direction"`
 	Timestamp    string   `json:"timestamp"`
+	ReceivedAt   string   `json:"receivedAt"`
 	SNR          *float64 `json:"snr,omitempty"`
 	RSSI         *int8    `json:"rssi,omitempty"`
 	RepeatCount  *int     `json:"repeatCount,omitempty"`
@@ -213,6 +214,7 @@ func toMessageJSON(m store.Message) messageJSON {
 		Text:         m.Text,
 		Direction:    m.Direction,
 		Timestamp:    m.Timestamp.UTC().Format(time.RFC3339),
+		ReceivedAt:   m.ReceivedAt.UTC().Format(time.RFC3339),
 		SNR:          m.SNR,
 		RSSI:         m.RSSI,
 		RepeatCount:  m.RepeatCount,

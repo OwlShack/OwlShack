@@ -145,6 +145,7 @@ func (c *Companion) handleRoomPush(pkt *meshcore.Packet, roomPubKey []byte, room
 		Text:        text,
 		Direction:   "rx",
 		Timestamp:   time.Unix(int64(postTs), 0),
+		ReceivedAt:  time.Now(),
 	}
 	if pkt.HasSignalInfo {
 		snr := float64(pkt.SNR)
@@ -169,6 +170,7 @@ func (c *Companion) handleRoomPush(pkt *meshcore.Packet, roomPubKey []byte, room
 				"text":        text,
 				"direction":   "rx",
 				"timestamp":   msg.Timestamp.UTC().Format(time.RFC3339),
+				"receivedAt":  msg.ReceivedAt.UTC().Format(time.RFC3339),
 				"id":          msg.ID,
 			}
 			if pkt.HasSignalInfo {
@@ -391,6 +393,7 @@ func (c *Companion) registerPacketHandlers() {
 			Text:         payload.Text,
 			Direction:    "rx",
 			Timestamp:    time.Unix(int64(payload.Timestamp), 0),
+			ReceivedAt:   time.Now(),
 			SNR:          snrPtr,
 			RSSI:         rssiPtr,
 			PathHashes:   pkt.Path,
@@ -433,6 +436,7 @@ func (c *Companion) registerPacketHandlers() {
 					"text":         payload.Text,
 					"direction":    "rx",
 					"timestamp":    msg.Timestamp.UTC().Format(time.RFC3339),
+					"receivedAt":   msg.ReceivedAt.UTC().Format(time.RFC3339),
 					"id":           msg.ID,
 					"hops":         hops,
 					"pathHashSize": pathHashSize,
@@ -576,6 +580,7 @@ func (c *Companion) registerPacketHandlers() {
 			hopsPtr, sizePtr = &hops, &pathHashSize
 		}
 
+		now := time.Now()
 		msg := &store.Message{
 			CompanionID:  c.cfg.ID,
 			Channel:      channelKey,
@@ -583,7 +588,8 @@ func (c *Companion) registerPacketHandlers() {
 			Sender:       senderName,
 			Text:         text,
 			Direction:    "rx",
-			Timestamp:    time.Now(),
+			Timestamp:    now,
+			ReceivedAt:   now,
 			PathHashes:   pkt.Path,
 			PathHashSize: sizePtr,
 			Hops:         hopsPtr,
@@ -611,6 +617,7 @@ func (c *Companion) registerPacketHandlers() {
 					"text":        text,
 					"direction":   "rx",
 					"timestamp":   msg.Timestamp.UTC().Format(time.RFC3339),
+					"receivedAt":  msg.ReceivedAt.UTC().Format(time.RFC3339),
 					"id":          msg.ID,
 				}
 				if hopsPtr != nil {

@@ -248,7 +248,7 @@ func PruneBackup(ctx context.Context, path string, opts PruneOptions) error {
 		cutoff     string
 	}{
 		{"packets", "received_at", opts.PacketDays, sinceMS},
-		{"messages", "timestamp", opts.MessageDays, sinceMS},
+		{"messages", "received_at", opts.MessageDays, sinceMS},
 		{"message_echoes", "", opts.MessageDays, ""}, // no timestamp; tied to messages
 		{"node_metrics", "ts", opts.MetricDays, sinceSecs},
 		{"node_neighbors", "ts", opts.MetricDays, sinceSecs},
@@ -344,7 +344,7 @@ func (s *Store) CountForBackup(ctx context.Context, opts PruneOptions) (*BackupC
 		q := "SELECT count(*) FROM messages WHERE companion_id IN (" + keptIDs + ")"
 		args := append([]any(nil), compArgs...)
 		if opts.MessageDays != DaysAll {
-			q += " AND timestamp >= " + sinceMS
+			q += " AND received_at >= " + sinceMS
 			args = append(args, fmt.Sprintf("-%d days", opts.MessageDays))
 		}
 		if err := s.db.QueryRowContext(ctx, q, args...).Scan(&out.Messages); err != nil {

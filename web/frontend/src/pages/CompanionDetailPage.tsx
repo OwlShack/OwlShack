@@ -132,7 +132,9 @@ interface Message {
   sender: string;
   text: string;
   direction: string;
+  // The sender's clock, which can be years out; receivedAt is ours.
   timestamp: string;
+  receivedAt: string;
   snr?: number | null;
   rssi?: number | null;
   repeatCount?: number | null;
@@ -209,7 +211,7 @@ function buildHearings(
   if (path && msg) {
     list.push({
       key: "rx",
-      receivedAt: msg.timestamp,
+      receivedAt: msg.receivedAt,
       hops: path.hops,
       path: path.path,
       snr: msg.snr,
@@ -963,6 +965,7 @@ function CompanionChat() {
         text: payload.text,
         direction: payload.direction,
         timestamp: payload.timestamp,
+        receivedAt: payload.receivedAt,
         snr: payload.snr,
         rssi: payload.rssi,
         repeatCount: payload.repeatCount,
@@ -970,7 +973,7 @@ function CompanionChat() {
         pathHashSize: payload.pathHashSize,
         status: (payload as { status?: string }).status,
       };
-      if (!incoming.channel || !incoming.timestamp) return;
+      if (!incoming.channel || !incoming.receivedAt) return;
 
       const cached = messageCacheRef.current.get(incoming.channel);
       if (cached) {
@@ -1000,7 +1003,7 @@ function CompanionChat() {
           direction: incoming.direction,
           timestamp: incoming.timestamp,
         };
-        target.lastActive = incoming.timestamp;
+        target.lastActive = incoming.receivedAt;
         if (typeof incoming.id === "number") target.lastMessageId = incoming.id;
         if (
           incoming.direction === "rx" &&
@@ -1905,12 +1908,17 @@ function CompanionChat() {
               </DialogTitle>
             </div>
             <DialogDescription className="font-mono text-xs text-muted-foreground">
-              {modal?.message.sender}
-              {modal?.message.timestamp && (
-                <>
-                  {" "}
-                  · {formatDateTime(modal.message.timestamp)}
-                </>
+              <span className="block">{modal?.message.sender}</span>
+              {modal?.message.receivedAt && (
+                <span className="block">
+                  {modal.message.direction === "tx" ? "sent" : "heard"}{" "}
+                  {formatDateTime(modal.message.receivedAt)}
+                </span>
+              )}
+              {modal && sentByTheirClock(modal.message) && (
+                <span className="block">
+                  sent {formatDateTime(modal.message.timestamp)} by their clock
+                </span>
               )}
             </DialogDescription>
           </DialogHeader>
@@ -1942,6 +1950,14 @@ function CompanionChat() {
 function convRecency(a: Conversation, b: Conversation): number {
   if (a.lastMessageId && b.lastMessageId) return b.lastMessageId - a.lastMessageId;
   return tsValue(b.lastActive) - tsValue(a.lastActive);
+}
+
+// A sender's own time is worth showing only when it disagrees with when we received it.
+function sentByTheirClock(m: Message): boolean {
+  return (
+    m.direction === "rx" &&
+    Math.abs(tsValue(m.timestamp) - tsValue(m.receivedAt)) > 60_000
+  );
 }
 
 function tsValue(iso?: string): number {
@@ -1995,7 +2011,7 @@ function mergeMessages(existing: Message[], incoming: Message[]): Message[] {
       const ia = typeof a.id === "number" && a.id > 0 ? a.id : Number.MAX_SAFE_INTEGER;
       const ib = typeof b.id === "number" && b.id > 0 ? b.id : Number.MAX_SAFE_INTEGER;
       if (ia !== ib) return ia - ib;
-      return tsValue(a.timestamp) - tsValue(b.timestamp);
+      return tsValue(a.receivedAt) - tsValue(b.receivedAt);
     });
   }
   return out;
@@ -2016,8 +2032,8 @@ function groupMessages(messages: Message[]): MessageGroupShape[] {
       last.sender === m.sender &&
       last.direction === m.direction &&
       Math.abs(
-        new Date(m.timestamp).getTime() -
-          new Date(last.messages[last.messages.length - 1].timestamp).getTime(),
+        new Date(m.receivedAt).getTime() -
+          new Date(last.messages[last.messages.length - 1].receivedAt).getTime(),
       ) <
         5 * 60 * 1000
     ) {
@@ -2283,7 +2299,7 @@ function MessageGroup({
             {isTx ? "me" : group.sender}
           </span>
           <span className="font-mono text-[10px] tabular-nums text-muted-foreground/60">
-            {formatShortTime(group.messages[0].timestamp)}
+            {formatShortTime(group.messages[0].receivedAt)}
           </span>
         </div>
         {group.messages.map((m, i) => (

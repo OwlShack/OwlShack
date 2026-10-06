@@ -153,7 +153,11 @@ message; no id yet ⇒ newest ⇒ last) and the threads list sorts on
 `lastMessageId` from `/conversations` (`convRecency`), falling back to
 `lastActive` only when a thread has no messages. The stored timestamp must stay
 the sender's: `handleRoomLogin` derives `sync_since` from `Messages.LatestRx`,
-which has to be in the *room's* clock domain or resync breaks. Fix a wrong
+which has to be in the *room's* clock domain or resync breaks. What the page
+shows is `receivedAt` (our clock, `messages.received_at`): group times, thread
+`lastActive`, grouping and the reception paths; the sender's `timestamp` appears
+only in the paths dialog, as "sent ... by their clock", when it is over a minute
+out. Fix a wrong
 remote clock with `clock sync` (firmware sets its RTC from our command's
 timestamp; it refuses to go backwards).
 
