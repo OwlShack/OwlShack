@@ -69,6 +69,11 @@ The node we run (`internal/node/repeater`) is measured against MeshCore 1.17.1
   config. This is our one intentional divergence.
 - **Regions are flat** (name + denyFlood), not the firmware's parent tree, so
   `region def` is unsupported and `region get` never prints a parent.
+  Keys follow `getTransportKeysFor`: `#name` hashes as given, a bare name as
+  `#name` (MeshCore 7ae16421), and a `$` private region gets no key, so it
+  never matches. `*` is the firmware's wildcard: always there, allowing flood
+  until denied, so a config with no `*` entry relays unscoped flood, and the
+  REST API refuses to remove it as the firmware does.
   `region save` returns OK because `reconfigure` already persisted; `region load`
   replies nothing, as the firmware's async reload does. `region list` and
   `regionsExport` are comma-separated (`region list` includes `*` and prints

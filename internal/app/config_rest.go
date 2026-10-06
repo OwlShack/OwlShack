@@ -493,19 +493,32 @@ func (b *backend) AddRepeaterRegion(ctx context.Context, in api.RepeaterRegionIn
 	})
 }
 
-// SetRepeaterRegionFlood toggles a region's deny-flood flag.
+// SetRepeaterRegionFlood toggles a region's deny-flood flag; "*" always exists, so it is added if it has no entry.
 func (b *backend) SetRepeaterRegionFlood(ctx context.Context, name string, denyFlood bool) error {
-	return b.mutateRepeater(ctx, func(r *store.Repeater) {
+	found := false
+	err := b.mutateRepeater(ctx, func(r *store.Repeater) {
 		for i := range r.Regions {
 			if r.Regions[i].Name == name {
 				r.Regions[i].DenyFlood = denyFlood
+				found = true
 			}
 		}
+		if !found && name == config.WildcardRegion {
+			r.Regions = append(r.Regions, store.RepeaterRegion{Name: name, DenyFlood: denyFlood})
+			found = true
+		}
 	})
+	if err == nil && !found {
+		return fmt.Errorf("unknown region %q", name)
+	}
+	return err
 }
 
-// RemoveRepeaterRegion: removing "*" stops relaying unscoped flood (see regionsFromConfig).
+// RemoveRepeaterRegion refuses "*", as the firmware does; denying flood on it stops relaying unscoped flood.
 func (b *backend) RemoveRepeaterRegion(ctx context.Context, name string) error {
+	if name == config.WildcardRegion {
+		return errors.New(`the "*" region cannot be removed; deny flood on it instead`)
+	}
 	return b.mutateRepeater(ctx, func(r *store.Repeater) {
 		r.Regions = slices.DeleteFunc(r.Regions, func(rg store.RepeaterRegion) bool { return rg.Name == name })
 		if r.DefaultRegion == name {

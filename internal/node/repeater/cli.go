@@ -699,14 +699,14 @@ func regionByPrefix(regions []config.RepeaterRegion, prefix string) (string, boo
 	return partial, partial != ""
 }
 
-// regionDenies reports the deny-flood flag; the wildcard denies when it has no config entry.
+// regionDenies reports the deny-flood flag; an absent "*" allows, as the firmware's wildcard always exists and starts allowing.
 func regionDenies(regions []config.RepeaterRegion, name string) bool {
 	for _, rg := range regions {
 		if rg.Name == name {
 			return rg.DenyFlood
 		}
 	}
-	return true
+	return name != config.WildcardRegion
 }
 
 // setRegionDeny creates the entry if needed, so `allowf *` materialises the wildcard.

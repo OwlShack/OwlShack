@@ -27,6 +27,12 @@ top until tagged.
   days in Settings, Service. A busy mesh keeps more packets than before, so the database can grow
   larger. Lowering the setting deletes the older packets within the hour, and they cannot be
   recovered.
+- **The `*` region works as it does on firmware.** It is always listed and cannot be removed;
+  turn on deny flood for it to stop relaying unscoped traffic. A repeater set up from a config file
+  with no `*` now relays unscoped traffic, as a new firmware repeater does. A repeater that had no
+  `*` before this update keeps not relaying it, and now shows `*` with deny flood on.
+- **A private region (a name starting with `$`) no longer matches anything**, as on a firmware
+  repeater, which needs that region's keys and OwlShack cannot load them.
 
 ### Fixed
 
@@ -62,6 +68,10 @@ top until tagged.
 - **Share Location from Map shows its map.** The map in the chat's Share Location dialog never
   appeared, so you could only share your own position. Each time you open it, it starts from your
   position again rather than the point you picked last time.
+- **Regions named without `#` work with firmware repeaters.** A region such as `nz` got a
+  different key from the one firmware repeaters use for it, so your repeater ignored their scoped
+  traffic in that region and they ignored yours. Regions written with `#`, such as `#nz`, already
+  matched.
 
 ### Upgrading
 
