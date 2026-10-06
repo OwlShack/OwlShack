@@ -166,7 +166,7 @@ node's admin or guest password.
 ### Release binary
 
 Pre-built binaries for Linux, macOS and Windows are on the
-[Releases](https://github.com/meshcore-go/OwlShack/releases) page.
+[Releases](https://github.com/OwlShack/OwlShack/releases) page.
 
 ```bash
 chmod +x OwlShack-linux-arm64
@@ -179,11 +179,11 @@ The installer picks the right package for the machine, installs it, and leaves
 OwlShack running under systemd — nothing has to stay in a terminal:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/meshcore-go/OwlShack/dev/packaging/install.sh | sudo sh
+curl -fsSL https://raw.githubusercontent.com/OwlShack/OwlShack/dev/packaging/install.sh | sudo sh
 ```
 
 Or take the `.deb` for `amd64`, `arm64`, `armhf` or `i386` from the
-[Releases](https://github.com/meshcore-go/OwlShack/releases) page yourself:
+[Releases](https://github.com/OwlShack/OwlShack/releases) page yourself:
 
 ```bash
 sudo apt install ./owlshack_1.4.0_arm64.deb
@@ -212,7 +212,7 @@ and messages, so take a backup from the Settings page first.
 
 ### Docker
 
-Published to `ghcr.io/meshcore-go/owlshack` for `linux/386`, `amd64`,
+Published to `ghcr.io/owlshack/owlshack` for `linux/386`, `amd64`,
 `arm/v6`, `arm/v7`, `arm64/v8`, `ppc64le`, `riscv64` and `s390x`.
 
 ```bash
@@ -221,7 +221,7 @@ docker run -d \
   -p 8080:8080 \
   -v "$PWD/data:/data" \
   -e TZ=Pacific/Auckland \
-  ghcr.io/meshcore-go/owlshack
+  ghcr.io/owlshack/owlshack
 ```
 
 Drop `--device` for a TCP radio connection. Set `TZ` to your own zone: the
@@ -234,7 +234,7 @@ Requires Go 1.26+ and Node. The SPA is embedded into the binary, so it has to
 be built first:
 
 ```bash
-git clone https://github.com/meshcore-go/OwlShack.git
+git clone https://github.com/OwlShack/OwlShack.git
 cd OwlShack
 ./build.sh          # builds the SPA, then a version-stamped binary
 ```

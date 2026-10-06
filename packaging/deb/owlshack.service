@@ -1,6 +1,6 @@
 [Unit]
 Description=OwlShack MeshCore Operator Console
-Documentation=https://github.com/meshcore-go/OwlShack
+Documentation=https://github.com/OwlShack/OwlShack
 After=network.target
 
 [Service]
