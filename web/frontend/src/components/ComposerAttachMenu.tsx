@@ -223,7 +223,8 @@ function ShareLocationDialog({
   initialLon?: number;
   onPick: (lat: number, lon: number) => void;
 }) {
-  const containerRef = useRef<HTMLDivElement>(null);
+  // A state ref, not useRef: the dialog content mounts a render after open, so the map waits for the element itself.
+  const [container, setContainer] = useState<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
   const tileRef = useRef<L.TileLayer | null>(null);
   const markerRef = useRef<L.Marker | null>(null);
@@ -234,13 +235,15 @@ function ShareLocationDialog({
   );
 
   useEffect(() => {
-    if (!open || !containerRef.current) return;
+    if (!container) return;
     const center: [number, number] =
       initialLat != null && initialLon != null
         ? [initialLat, initialLon]
         : [0, 0];
-    const map = L.map(containerRef.current).setView(center, initialLat != null ? 12 : 2);
+    const map = L.map(container).setView(center, initialLat != null ? 12 : 2);
     tileRef.current = themeTileLayer().addTo(map);
+    // Each open starts from the marker shown, not the point picked last time.
+    setPicked(initialLat != null && initialLon != null ? { lat: initialLat, lon: initialLon } : null);
     if (initialLat != null && initialLon != null) {
       markerRef.current = L.marker([initialLat, initialLon]).addTo(map);
     }
@@ -260,7 +263,7 @@ function ShareLocationDialog({
       tileRef.current = null;
       markerRef.current = null;
     };
-  }, [open, initialLat, initialLon]);
+  }, [container, initialLat, initialLon]);
 
   useThemeTiles(mapRef, tileRef);
 
@@ -272,7 +275,7 @@ function ShareLocationDialog({
             Share Location
           </DialogTitle>
         </DialogHeader>
-        <div ref={containerRef} className="h-64 w-full border border-border" />
+        <div ref={setContainer} className="h-64 w-full border border-border" />
         <div className="flex items-center justify-between gap-3">
           <span className="font-mono text-xs text-muted-foreground tabular-nums">
             {picked

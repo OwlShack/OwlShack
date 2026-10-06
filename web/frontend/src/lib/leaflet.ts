@@ -13,6 +13,13 @@ L.Icon.Default.mergeOptions({
   shadowUrl: markerShadow,
 });
 
+// Leaflet focuses the map on press and restores only the window's scroll, but <main> scrolls here, so the map slid out from under the tap.
+L.Map.addInitHook(function (this: L.Map) {
+  const el = this.getContainer();
+  const focus = el.focus.bind(el);
+  el.focus = (opts) => focus({ ...opts, preventScroll: true });
+});
+
 export type MapProvider = "osm" | "carto";
 export type MapDarkStyle = "original" | "simplified";
 
