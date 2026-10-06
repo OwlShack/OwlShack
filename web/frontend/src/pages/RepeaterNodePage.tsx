@@ -892,7 +892,11 @@ function SettingsTab({ rep, reload }: { rep: ConfigRepeater; reload: () => void 
     }
   };
 
-  const regions = rep.regions ?? [];
+  // "*" always exists on firmware and allows flood until denied, so a config with no entry still shows it.
+  const stored = rep.regions ?? [];
+  const regions = stored.some((rg) => rg.name === "*")
+    ? stored
+    : [{ name: "*", denyFlood: false }, ...stored];
   const addRegion = () => {
     const rn = newRegion.trim();
     if (rn === "" || regions.some((r) => r.name === rn)) return;
@@ -1062,10 +1066,10 @@ function SettingsTab({ rep, reload }: { rep: ConfigRepeater; reload: () => void 
           <p className="font-mono text-[11px] leading-relaxed text-muted-foreground">
             Transport scopes this repeater relays: it re-floods scoped packets
             whose region matches one of these (the key is derived from the
-            region name). The <span className="text-foreground">*</span> scope
-            is plain unscoped flood — remove it to stop relaying unscoped
-            traffic, add it back to resume; deny-flood toggles it without
-            removing.
+            region name, as on firmware). The{" "}
+            <span className="text-foreground">*</span> scope is plain unscoped
+            flood. It is always there; deny flood on it to stop relaying
+            unscoped traffic.
           </p>
           {regions.length > 0 && (
             <div className="divide-y divide-border border border-border">
@@ -1088,21 +1092,23 @@ function SettingsTab({ rep, reload }: { rep: ConfigRepeater; reload: () => void 
                         }
                       />
                     </label>
-                    <InlineConfirm
-                      confirming={confirmRegion === rg.name}
-                      onAskRemove={() => setConfirmRegion(rg.name)}
-                      onCancel={() => setConfirmRegion(null)}
-                      onConfirm={() => {
-                        regionOp(
-                          rg.name,
-                          () => configApi.removeRepeaterRegion(rg.name),
-                          "Region removed",
-                        );
-                        setConfirmRegion(null);
-                      }}
-                      iconOnly
-                      ariaLabel={`remove region ${rg.name}`}
-                    />
+                    {rg.name !== "*" && (
+                      <InlineConfirm
+                        confirming={confirmRegion === rg.name}
+                        onAskRemove={() => setConfirmRegion(rg.name)}
+                        onCancel={() => setConfirmRegion(null)}
+                        onConfirm={() => {
+                          regionOp(
+                            rg.name,
+                            () => configApi.removeRepeaterRegion(rg.name),
+                            "Region removed",
+                          );
+                          setConfirmRegion(null);
+                        }}
+                        iconOnly
+                        ariaLabel={`remove region ${rg.name}`}
+                      />
+                    )}
                   </div>
                 </div>
               ))}

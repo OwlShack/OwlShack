@@ -56,7 +56,7 @@ type RepeaterRegion struct {
 	DenyFlood bool   `json:"denyFlood,omitempty" yaml:"denyFlood,omitempty" toml:"denyFlood,omitempty"`
 }
 
-// WildcardRegion ("*") is the unscoped flood scope, modelled as an editable Regions entry; its absence means unscoped flood is not relayed.
+// WildcardRegion ("*") is the unscoped flood scope; like the firmware's wildcard it cannot be removed, and with no entry it allows flood.
 const WildcardRegion = "*"
 
 // validateRegionName mirrors the firmware's RegionMap::is_name_char / MAX_REGION_NAME; the wildcard "*" is exempt.

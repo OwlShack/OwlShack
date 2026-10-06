@@ -285,25 +285,38 @@ func (r *Repeater) Stop() error {
 	return nil
 }
 
-// regionsFromConfig derives each named scope's key from its name (SHA256(name)[:16], firmware getAutoKeyFor); "*" is never a named region.
+// regionsFromConfig keys each named region as the firmware's getTransportKeysFor does; "*" is never a named region.
 func regionsFromConfig(cfg []config.RepeaterRegion) (named []*meshcore.Region, wildcardFlags uint8) {
-	wildcardFlags = meshcore.RegionDenyFlood // no "*" entry ⇒ don't relay unscoped flood
 	for _, rg := range cfg {
 		if rg.Name == config.WildcardRegion {
 			if rg.DenyFlood {
 				wildcardFlags = meshcore.RegionDenyFlood
-			} else {
-				wildcardFlags = 0
 			}
 			continue
 		}
-		reg := meshcore.NewRegionFromKey(rg.Name, meshcore.DeriveRegionKey(rg.Name))
+		key, ok := regionKey(rg.Name)
+		if !ok {
+			continue
+		}
+		reg := meshcore.NewRegionFromKey(rg.Name, key)
 		if rg.DenyFlood {
 			reg.Flags |= meshcore.RegionDenyFlood
 		}
 		named = append(named, reg)
 	}
 	return named, wildcardFlags
+}
+
+// regionKey is RegionMap::getTransportKeysFor: "#name" hashes as given, a bare name as "#name", and a "$" private region has no key we can know.
+func regionKey(name string) (meshcore.RegionKey, bool) {
+	switch {
+	case strings.HasPrefix(name, "$"):
+		return meshcore.RegionKey{}, false
+	case strings.HasPrefix(name, "#"):
+		return meshcore.DeriveRegionKey(name), true
+	default:
+		return meshcore.DeriveRegionKey("#" + name), true
+	}
 }
 
 // ApplyRegions updates regions in place so a region-only edit doesn't restart the node and wipe neighbours, routes and counters.

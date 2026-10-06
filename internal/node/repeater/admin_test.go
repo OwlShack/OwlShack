@@ -1,7 +1,9 @@
 package repeater
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/binary"
 	"strings"
 	"testing"
@@ -152,18 +154,18 @@ func TestRegionReads(t *testing.T) {
 	r := &Repeater{cfg: config.RepeaterConfig{Regions: []config.RepeaterRegion{
 		{Name: "alpha"}, {Name: "bravo", DenyFlood: true},
 	}}}
-	if got := r.runCLI("region list allowed"); got != "alpha" {
-		t.Errorf("region list allowed = %q, want %q", got, "alpha")
+	if got := r.runCLI("region list allowed"); got != "*,alpha" { // no "*" entry ⇒ the wildcard allows, as on firmware
+		t.Errorf("region list allowed = %q, want %q", got, "*,alpha")
 	}
-	if got := r.runCLI("region list denied"); got != "*,bravo" { // no "*" entry ⇒ the wildcard denies
-		t.Errorf("region list denied = %q, want %q", got, "*,bravo")
+	if got := r.runCLI("region list denied"); got != "bravo" {
+		t.Errorf("region list denied = %q, want %q", got, "bravo")
 	}
 	if got := r.runCLI("region remove ghost"); got != "Err - not found" {
 		t.Errorf("region remove ghost = %q, want %q", got, "Err - not found")
 	}
 }
 
-// Pins the "*" entry mapping to wildcard flags, and an absent "*" denying unscoped flood.
+// Pins the "*" entry mapping to wildcard flags, and an absent "*" allowing unscoped flood as the firmware's wildcard does.
 func TestRegionsFromConfig(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -171,11 +173,12 @@ func TestRegionsFromConfig(t *testing.T) {
 		wantNamed []string
 		wantDeny  bool // wildcard denies unscoped flood
 	}{
-		{"empty ⇒ deny", nil, nil, true},
+		{"empty ⇒ allow", nil, nil, false},
 		{"* allow", []config.RepeaterRegion{{Name: "*"}}, nil, false},
 		{"* deny", []config.RepeaterRegion{{Name: "*", DenyFlood: true}}, nil, true},
 		{"named + *", []config.RepeaterRegion{{Name: "alpha"}, {Name: "*"}}, []string{"alpha"}, false},
-		{"named only ⇒ deny unscoped", []config.RepeaterRegion{{Name: "alpha"}}, []string{"alpha"}, true},
+		{"named only ⇒ allow unscoped", []config.RepeaterRegion{{Name: "alpha"}}, []string{"alpha"}, false},
+		{"private region has no key", []config.RepeaterRegion{{Name: "$p"}, {Name: "alpha"}}, []string{"alpha"}, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -200,6 +203,17 @@ func TestRegionsFromConfig(t *testing.T) {
 				t.Errorf("wildcard deny = %v, want %v", gotDeny, c.wantDeny)
 			}
 		})
+	}
+}
+
+// Keys match the firmware's getTransportKeysFor: a bare name hashes as "#name" (MeshCore 7ae16421), so "nz" and "#nz" are one region.
+func TestRegionKeyMatchesFirmware(t *testing.T) {
+	want := sha256.Sum256([]byte("#nz"))
+	for _, name := range []string{"nz", "#nz"} {
+		named, _ := regionsFromConfig([]config.RepeaterRegion{{Name: name}})
+		if len(named) != 1 || !bytes.Equal(named[0].Key[:], want[:meshcore.RegionKeySize]) {
+			t.Errorf("region %q key = %x, want SHA256(\"#nz\")[:16] %x", name, named[0].Key, want[:meshcore.RegionKeySize])
+		}
 	}
 }
 
@@ -312,9 +326,9 @@ func TestRegionsExport(t *testing.T) {
 	if got := r.regionsExport(); got != "*,alpha" {
 		t.Errorf("export = %q, want %q", got, "*,alpha")
 	}
-	r.cfg.Regions = nil // no "*" entry ⇒ unscoped flood denied ⇒ nothing exported
-	if got := r.regionsExport(); got != "" {
-		t.Errorf("empty export = %q, want \"\"", got)
+	r.cfg.Regions = nil // no "*" entry ⇒ the wildcard allows flood, as on firmware
+	if got := r.regionsExport(); got != "*" {
+		t.Errorf("empty export = %q, want %q", got, "*")
 	}
 }
 
@@ -468,8 +482,8 @@ func TestRegionTree(t *testing.T) {
 		t.Errorf("region tree = %q, want %q", got, want)
 	}
 
-	r.cfg.Regions = []config.RepeaterRegion{{Name: "alpha"}} // no "*" ⇒ unscoped flood denied
-	if got := r.runCLI("region"); got != "*\n alpha^ F\n" {
+	r.cfg.Regions = []config.RepeaterRegion{{Name: "alpha"}} // no "*" ⇒ the wildcard allows, printed "* F" as printChildRegions does
+	if got := r.runCLI("region"); got != "* F\n alpha^ F\n" {
 		t.Errorf("region tree without wildcard = %q", got)
 	}
 }
@@ -848,7 +862,7 @@ func TestRegionPrefixLookup(t *testing.T) {
 		"region get al":    " al F",
 		"region get alp":   " alphabet ",
 		"region get alpha": " alpha F",
-		"region get *":     " * ",
+		"region get *":     " * F", // no "*" entry: the wildcard allows, as on firmware
 		"region get zz":    "Err - unknown region",
 	} {
 		if got := r.runCLI(cmd); got != want {
