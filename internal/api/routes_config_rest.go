@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/meshcore-go/OwlShack/internal/store"
+	"github.com/OwlShack/OwlShack/internal/store"
 )
 
 // Config REST reads never send a secret: each becomes a boolean "<field>Set".

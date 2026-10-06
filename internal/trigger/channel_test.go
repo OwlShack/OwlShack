@@ -9,7 +9,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/meshcore-go/OwlShack/internal/config"
+	"github.com/OwlShack/OwlShack/internal/config"
 	meshcore "github.com/meshcore-go/meshcore-go"
 )
 

@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/meshcore-go/OwlShack/internal/logging"
+	"github.com/OwlShack/OwlShack/internal/logging"
 	"github.com/meshcore-go/meshcore-go/hardware"
 )
 

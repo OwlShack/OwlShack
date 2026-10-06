@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/meshcore-go/OwlShack/internal/buildinfo"
+	"github.com/OwlShack/OwlShack/internal/buildinfo"
 )
 
 // handleHealth is 200 whenever the process is alive: an unreachable OwlShack already fails the request, so the code is not spent on a second opinion.

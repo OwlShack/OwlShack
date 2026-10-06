@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshcore-go/OwlShack/internal/config"
+	"github.com/OwlShack/OwlShack/internal/config"
 )
 
 // feedServer serves an Atom feed whose entries are named by titles, each linking to /alert/<n>.

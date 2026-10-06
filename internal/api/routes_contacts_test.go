@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/meshcore-go/OwlShack/internal/store"
+	"github.com/OwlShack/OwlShack/internal/store"
 )
 
 // A PATCH names what it changes: replacing the blob let the repeater list's {"isRepeater":true} wipe a saved password and a telemetry grant.

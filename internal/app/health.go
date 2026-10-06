@@ -5,8 +5,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/meshcore-go/OwlShack/internal/api"
-	"github.com/meshcore-go/OwlShack/internal/modem"
+	"github.com/OwlShack/OwlShack/internal/api"
+	"github.com/OwlShack/OwlShack/internal/modem"
 )
 
 // radioActivity is process-scoped, not a backend field: a reload swaps the backend but the radio's history carries on. 0 = none since start.

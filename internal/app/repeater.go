@@ -6,11 +6,11 @@ import (
 	"log/slog"
 	"reflect"
 
-	"github.com/meshcore-go/OwlShack/internal/api"
-	"github.com/meshcore-go/OwlShack/internal/config"
-	"github.com/meshcore-go/OwlShack/internal/modem"
-	"github.com/meshcore-go/OwlShack/internal/node/repeater"
-	"github.com/meshcore-go/OwlShack/internal/store"
+	"github.com/OwlShack/OwlShack/internal/api"
+	"github.com/OwlShack/OwlShack/internal/config"
+	"github.com/OwlShack/OwlShack/internal/modem"
+	"github.com/OwlShack/OwlShack/internal/node/repeater"
+	"github.com/OwlShack/OwlShack/internal/store"
 	"github.com/meshcore-go/meshcore-go/node"
 )
 

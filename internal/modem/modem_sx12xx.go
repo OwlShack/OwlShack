@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/meshcore-go/OwlShack/internal/config"
+	"github.com/OwlShack/OwlShack/internal/config"
 	"github.com/meshcore-go/meshcore-go/hardware"
 	"github.com/meshcore-go/meshcore-go/hardware/sx12xx"
 	"periph.io/x/conn/v3/gpio/gpioreg"

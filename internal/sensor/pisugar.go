@@ -8,7 +8,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/meshcore-go/OwlShack/internal/sensor/pisugar"
+	"github.com/OwlShack/OwlShack/internal/sensor/pisugar"
 )
 
 // Charging and Plugged are states rather than measurements, carried as 1 and 0.

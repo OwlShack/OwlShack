@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/meshcore-go/OwlShack/internal/config"
+	"github.com/OwlShack/OwlShack/internal/config"
 )
 
 func newDMTrigger(t *testing.T, cfg config.TriggerConfig) (*DMTrigger, *[]Event) {

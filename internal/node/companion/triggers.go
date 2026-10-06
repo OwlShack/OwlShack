@@ -8,9 +8,9 @@ import (
 
 	meshcore "github.com/meshcore-go/meshcore-go"
 
-	"github.com/meshcore-go/OwlShack/internal/config"
-	"github.com/meshcore-go/OwlShack/internal/logging"
-	"github.com/meshcore-go/OwlShack/internal/trigger"
+	"github.com/OwlShack/OwlShack/internal/config"
+	"github.com/OwlShack/OwlShack/internal/logging"
+	"github.com/OwlShack/OwlShack/internal/trigger"
 )
 
 // ReloadTriggers swaps the trigger set without touching the node, adverts or sessions; the new set is validated before the old one is stopped.

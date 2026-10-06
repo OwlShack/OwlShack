@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/meshcore-go/OwlShack/internal/store"
+	"github.com/OwlShack/OwlShack/internal/store"
 )
 
 // refServer wires a real store to a mux with one echo route, so what a handler sees after the

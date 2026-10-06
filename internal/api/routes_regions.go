@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/meshcore-go/OwlShack/internal/region"
+	"github.com/OwlShack/OwlShack/internal/region"
 )
 
 // regionDTO is one region with its outline, [lon, lat] rings read even-odd.

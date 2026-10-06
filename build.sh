@@ -41,7 +41,7 @@ echo ">> Building backend -> ${OUTPUT} (version ${VERSION}, built ${BUILD_DATE})
 go mod download
 CGO_ENABLED=0 go build \
   -trimpath \
-  -ldflags "-s -w -X github.com/meshcore-go/OwlShack/internal/buildinfo.Version=${VERSION} -X github.com/meshcore-go/OwlShack/internal/buildinfo.Date=${BUILD_DATE}" \
+  -ldflags "-s -w -X github.com/OwlShack/OwlShack/internal/buildinfo.Version=${VERSION} -X github.com/OwlShack/OwlShack/internal/buildinfo.Date=${BUILD_DATE}" \
   -o "${OUTPUT}" .
 
 echo ">> Done: ${OUTPUT} ($(du -h "${OUTPUT}" | cut -f1))"

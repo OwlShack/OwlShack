@@ -7,8 +7,8 @@ import (
 
 	meshcore "github.com/meshcore-go/meshcore-go"
 
-	"github.com/meshcore-go/OwlShack/internal/meshpath"
-	"github.com/meshcore-go/OwlShack/internal/store"
+	"github.com/OwlShack/OwlShack/internal/meshpath"
+	"github.com/OwlShack/OwlShack/internal/store"
 )
 
 func (r *Repeater) registerHandlers() {

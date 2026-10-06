@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshcore-go/OwlShack/internal/config"
-	"github.com/meshcore-go/OwlShack/internal/store"
+	"github.com/OwlShack/OwlShack/internal/config"
+	"github.com/OwlShack/OwlShack/internal/store"
 )
 
 // A taken web port must stop Run, not leave a node running with no UI.

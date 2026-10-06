@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/meshcore-go/OwlShack/internal/monitor"
-	"github.com/meshcore-go/OwlShack/internal/store"
+	"github.com/OwlShack/OwlShack/internal/monitor"
+	"github.com/OwlShack/OwlShack/internal/store"
 )
 
 // NodePoller is the monitor-service seam, implemented by *monitor.Service and installed via Server.SetPoller.

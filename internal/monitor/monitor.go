@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/meshcore-go/OwlShack/internal/store"
+	"github.com/OwlShack/OwlShack/internal/store"
 )
 
 // WSTopicMetrics is the WebSocket topic live readings are broadcast on.

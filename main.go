@@ -8,9 +8,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/meshcore-go/OwlShack/internal/app"
-	"github.com/meshcore-go/OwlShack/internal/buildinfo"
-	"github.com/meshcore-go/OwlShack/internal/logging"
+	"github.com/OwlShack/OwlShack/internal/app"
+	"github.com/OwlShack/OwlShack/internal/buildinfo"
+	"github.com/OwlShack/OwlShack/internal/logging"
 	flag "github.com/spf13/pflag"
 )
 

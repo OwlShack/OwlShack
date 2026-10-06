@@ -12,7 +12,7 @@ import (
 
 	"github.com/robfig/cron/v3"
 
-	"github.com/meshcore-go/OwlShack/internal/region"
+	"github.com/OwlShack/OwlShack/internal/region"
 )
 
 type TriggerConfig struct {

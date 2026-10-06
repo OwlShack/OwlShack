@@ -17,8 +17,8 @@ import (
 	"periph.io/x/conn/v3/i2c/i2ctest"
 	"periph.io/x/conn/v3/physic"
 
-	"github.com/meshcore-go/OwlShack/internal/sensor/ads1x15"
-	"github.com/meshcore-go/OwlShack/internal/sensor/bme680"
+	"github.com/OwlShack/OwlShack/internal/sensor/ads1x15"
+	"github.com/OwlShack/OwlShack/internal/sensor/bme680"
 )
 
 func TestParseAddress(t *testing.T) {

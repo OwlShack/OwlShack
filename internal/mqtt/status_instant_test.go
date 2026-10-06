@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshcore-go/OwlShack/internal/modem"
+	"github.com/OwlShack/OwlShack/internal/modem"
 )
 
 // pollingStats mimics a board poll: Stats blocks, and a packet arrives while it does.

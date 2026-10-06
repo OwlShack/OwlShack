@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/meshcore-go/OwlShack/internal/monitor"
-	"github.com/meshcore-go/OwlShack/internal/store"
+	"github.com/OwlShack/OwlShack/internal/monitor"
+	"github.com/OwlShack/OwlShack/internal/store"
 )
 
 // linkMonitorDefaultIntervalSecs is the cadence for a link monitor that doesn't override it.

@@ -6,8 +6,8 @@ import (
 	meshcore "github.com/meshcore-go/meshcore-go"
 	"github.com/meshcore-go/meshcore-go/node"
 
-	"github.com/meshcore-go/OwlShack/internal/config"
-	"github.com/meshcore-go/OwlShack/internal/sensor"
+	"github.com/OwlShack/OwlShack/internal/config"
+	"github.com/OwlShack/OwlShack/internal/sensor"
 )
 
 // reqTypeGetTelemetryData is the firmware's REQ_TYPE_GET_TELEMETRY_DATA; a companion answers no other.

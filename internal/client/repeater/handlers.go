@@ -10,7 +10,7 @@ import (
 	meshcore "github.com/meshcore-go/meshcore-go"
 	"github.com/meshcore-go/meshcore-go/node"
 
-	"github.com/meshcore-go/OwlShack/internal/meshpath"
+	"github.com/OwlShack/OwlShack/internal/meshpath"
 )
 
 func (rm *Client) HandlePathPacket(pkt *meshcore.Packet) bool {

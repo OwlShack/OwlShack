@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/meshcore-go/OwlShack/internal/sensor"
-	"github.com/meshcore-go/OwlShack/internal/store"
+	"github.com/OwlShack/OwlShack/internal/sensor"
+	"github.com/OwlShack/OwlShack/internal/store"
 )
 
 // telemetryPublisher outlives a radio generation, so the app owns it and hands each node a hook bound to its id.

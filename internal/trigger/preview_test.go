@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/meshcore-go/OwlShack/internal/config"
+	"github.com/OwlShack/OwlShack/internal/config"
 	"github.com/mmcdole/gofeed"
 )
 

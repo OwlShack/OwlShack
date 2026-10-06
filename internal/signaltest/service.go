@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/meshcore-go/OwlShack/internal/store"
+	"github.com/OwlShack/OwlShack/internal/store"
 )
 
 // ErrAlreadyRunning is returned by Begin when a test is already active; the API layer maps it to 409.

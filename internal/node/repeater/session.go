@@ -12,8 +12,8 @@ import (
 	meshcore "github.com/meshcore-go/meshcore-go"
 	"github.com/meshcore-go/meshcore-go/node"
 
-	"github.com/meshcore-go/OwlShack/internal/config"
-	"github.com/meshcore-go/OwlShack/internal/store"
+	"github.com/OwlShack/OwlShack/internal/config"
+	"github.com/OwlShack/OwlShack/internal/store"
 )
 
 // Admin-over-mesh: the server side of internal/client/repeater, wire formats mirroring firmware MyMesh.cpp handleLoginReq / handleRequest.

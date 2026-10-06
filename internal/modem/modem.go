@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/meshcore-go/OwlShack/internal/config"
+	"github.com/OwlShack/OwlShack/internal/config"
 	"github.com/meshcore-go/meshcore-go/hardware"
 	kissTransport "github.com/meshcore-go/meshcore-go/hardware/transport"
 	"github.com/meshcore-go/meshcore-go/node"

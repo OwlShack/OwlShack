@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshcore-go/OwlShack/internal/config"
+	"github.com/OwlShack/OwlShack/internal/config"
 	"github.com/meshcore-go/meshcore-go/node"
 )
 
