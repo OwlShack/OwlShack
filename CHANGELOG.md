@@ -63,6 +63,14 @@ top until tagged.
   appeared, so you could only share your own position. Each time you open it, it starts from your
   position again rather than the point you picked last time.
 
+### Upgrading
+
+- **Docker images are now at `ghcr.io/owlshack/owlshack`.** The project moved to the OwlShack
+  organisation on GitHub, and pulls from `ghcr.io/meshcore-go/owlshack` already fail. Change the
+  image name in your `docker run` command or compose file; the tags are the same. The Debian
+  installer and the GitHub links still work through GitHub's redirect, but use the new addresses
+  in the README.
+
 ## v1.5.0 - 2026-10-01
 
 Baseline `v1.4.2`. Sensors on the Pi, sent over the mesh; bytes per hop and one Path window for

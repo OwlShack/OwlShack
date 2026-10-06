@@ -2,12 +2,12 @@
 # One-shot installer for Debian, Ubuntu and Raspberry Pi OS: picks the .deb for
 # this machine, installs it, and leaves OwlShack running under systemd.
 #
-#   curl -fsSL https://raw.githubusercontent.com/meshcore-go/OwlShack/dev/packaging/install.sh | sudo sh
+#   curl -fsSL https://raw.githubusercontent.com/OwlShack/OwlShack/dev/packaging/install.sh | sudo sh
 #
 #   URL=./owlshack.deb   install a package you already have (a local build works)
 set -eu
 
-REPO=meshcore-go/OwlShack
+REPO=OwlShack/OwlShack
 
 [ "$(id -u)" = 0 ] || { echo "Run this as root: pipe it to 'sudo sh', or sudo sh install.sh" >&2; exit 1; }
 command -v dpkg >/dev/null && command -v apt-get >/dev/null || { echo "Not a Debian-based system. Use the release binary or Docker: https://github.com/$REPO#install" >&2; exit 1; }
