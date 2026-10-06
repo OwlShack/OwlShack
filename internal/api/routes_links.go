@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/meshcore-go/OwlShack/internal/monitor"
-	"github.com/meshcore-go/OwlShack/internal/store"
+	"github.com/OwlShack/OwlShack/internal/monitor"
+	"github.com/OwlShack/OwlShack/internal/store"
 )
 
 // linkMonitorKey derives the synthetic 32-byte key a link monitor is polled under.

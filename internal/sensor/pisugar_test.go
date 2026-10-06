@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshcore-go/OwlShack/internal/sensor/pisugar"
+	"github.com/OwlShack/OwlShack/internal/sensor/pisugar"
 )
 
 // fakePiSugar answers like pisugar-server; the protocol itself is exercised in the driver's own tests.

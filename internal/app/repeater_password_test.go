@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/meshcore-go/OwlShack/internal/api"
+	"github.com/OwlShack/OwlShack/internal/api"
 )
 
 // A blank admin password compares equal to the blank a login sends, so it must be impossible to

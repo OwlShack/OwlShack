@@ -3,7 +3,7 @@ package app
 import (
 	"testing"
 
-	"github.com/meshcore-go/OwlShack/internal/config"
+	"github.com/OwlShack/OwlShack/internal/config"
 )
 
 func ptr(v int) *int { return &v }

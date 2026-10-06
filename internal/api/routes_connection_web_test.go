@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshcore-go/OwlShack/internal/store"
+	"github.com/OwlShack/OwlShack/internal/store"
 	meshcore "github.com/meshcore-go/meshcore-go"
 )
 

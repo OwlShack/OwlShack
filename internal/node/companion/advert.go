@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/meshcore-go/OwlShack/internal/config"
-	"github.com/meshcore-go/OwlShack/internal/node/advert"
+	"github.com/OwlShack/OwlShack/internal/config"
+	"github.com/OwlShack/OwlShack/internal/node/advert"
 )
 
 func (c *Companion) advertLoop(ctx context.Context) {

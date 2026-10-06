@@ -12,10 +12,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/OwlShack/OwlShack/internal/config"
+	"github.com/OwlShack/OwlShack/internal/logging"
+	"github.com/OwlShack/OwlShack/internal/modem"
 	paho "github.com/eclipse/paho.mqtt.golang"
-	"github.com/meshcore-go/OwlShack/internal/config"
-	"github.com/meshcore-go/OwlShack/internal/logging"
-	"github.com/meshcore-go/OwlShack/internal/modem"
 	meshcore "github.com/meshcore-go/meshcore-go"
 	"github.com/meshcore-go/meshcore-go/node"
 )

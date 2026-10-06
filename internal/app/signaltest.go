@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/meshcore-go/OwlShack/internal/signaltest"
+	"github.com/OwlShack/OwlShack/internal/signaltest"
 )
 
 // newSignalTestTracer adapts RunTrace to signaltest.Tracer so signaltest never imports internal/node/companion.

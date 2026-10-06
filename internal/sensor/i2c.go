@@ -20,11 +20,11 @@ import (
 	"periph.io/x/conn/v3/physic"
 	"periph.io/x/host/v3"
 
-	"github.com/meshcore-go/OwlShack/internal/sensor/ads1x15"
-	"github.com/meshcore-go/OwlShack/internal/sensor/bme680"
-	"github.com/meshcore-go/OwlShack/internal/sensor/ens210"
-	"github.com/meshcore-go/OwlShack/internal/sensor/lps22hb"
-	"github.com/meshcore-go/OwlShack/internal/sensor/shtc3"
+	"github.com/OwlShack/OwlShack/internal/sensor/ads1x15"
+	"github.com/OwlShack/OwlShack/internal/sensor/bme680"
+	"github.com/OwlShack/OwlShack/internal/sensor/ens210"
+	"github.com/OwlShack/OwlShack/internal/sensor/lps22hb"
+	"github.com/OwlShack/OwlShack/internal/sensor/shtc3"
 )
 
 // chip is one part this build can drive, and the addresses it can answer on.

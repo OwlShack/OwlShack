@@ -1,4 +1,4 @@
-module github.com/meshcore-go/OwlShack
+module github.com/OwlShack/OwlShack
 
 go 1.26.7
 

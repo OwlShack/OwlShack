@@ -135,7 +135,7 @@ jobs:
           OUTPUT="OwlShack-${SUFFIX}${EXT}"
           # Mirrors the firmware's own build.sh. The commit's own date and offset, so all 11 jobs agree.
           BUILD_DATE="$(git log -1 --format=%cd --date=format:'%d-%b-%Y')"
-          CGO_ENABLED=0 go build -ldflags "-s -w -X github.com/meshcore-go/OwlShack/internal/buildinfo.Version=${{ github.ref_name }} -X github.com/meshcore-go/OwlShack/internal/buildinfo.Date=${BUILD_DATE}" -o "${OUTPUT}" .
+          CGO_ENABLED=0 go build -ldflags "-s -w -X github.com/OwlShack/OwlShack/internal/buildinfo.Version=${{ github.ref_name }} -X github.com/OwlShack/OwlShack/internal/buildinfo.Date=${BUILD_DATE}" -o "${OUTPUT}" .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7

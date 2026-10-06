@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"slices"
 
-	"github.com/meshcore-go/OwlShack/internal/config"
+	"github.com/OwlShack/OwlShack/internal/config"
 )
 
 // fieldMatcher holds a feed trigger's patterns grouped by the field each names. Within a field the

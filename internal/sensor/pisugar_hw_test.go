@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshcore-go/OwlShack/internal/sensor/pisugar"
+	"github.com/OwlShack/OwlShack/internal/sensor/pisugar"
 )
 
 // Skipped unless PISUGAR_HW_ADDR names a running pisugar-server; build with `go test -c`, as the Pi Zero the HAT sits on has no toolchain.

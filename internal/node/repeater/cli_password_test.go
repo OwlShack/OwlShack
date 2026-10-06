@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/meshcore-go/OwlShack/internal/config"
+	"github.com/OwlShack/OwlShack/internal/config"
 )
 
 // No CLI input may reach the mutation with a blank password: a blank one compares equal to the

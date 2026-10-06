@@ -13,7 +13,7 @@ import (
 	"os"
 	"slices"
 
-	"github.com/meshcore-go/OwlShack/internal/region"
+	"github.com/OwlShack/OwlShack/internal/region"
 )
 
 // Natural Earth is public domain; the release is pinned so a rebuild is reproducible.

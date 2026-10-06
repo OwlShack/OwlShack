@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/meshcore-go/OwlShack/internal/modem"
+	"github.com/OwlShack/OwlShack/internal/modem"
 	meshcore "github.com/meshcore-go/meshcore-go"
 )
 

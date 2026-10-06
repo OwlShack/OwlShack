@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/OwlShack/OwlShack/internal/config"
 	paho "github.com/eclipse/paho.mqtt.golang"
-	"github.com/meshcore-go/OwlShack/internal/config"
 	meshcore "github.com/meshcore-go/meshcore-go"
 	"github.com/meshcore-go/meshcore-go/node"
 )

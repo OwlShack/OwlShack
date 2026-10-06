@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshcore-go/OwlShack/internal/modem"
+	"github.com/OwlShack/OwlShack/internal/modem"
 )
 
 // plaintext builds a TXT_MSG body the way BaseChatMesh::composeMsgPacket does: attempts 0-3 ride

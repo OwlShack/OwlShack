@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshcore-go/OwlShack/internal/config"
+	"github.com/OwlShack/OwlShack/internal/config"
 )
 
 func TestCAPTrigger_DecoratesFromLinkedAlert(t *testing.T) {

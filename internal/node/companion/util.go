@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/meshcore-go/OwlShack/internal/config"
-	"github.com/meshcore-go/OwlShack/internal/trigger"
+	"github.com/OwlShack/OwlShack/internal/config"
+	"github.com/OwlShack/OwlShack/internal/trigger"
 	meshcore "github.com/meshcore-go/meshcore-go"
 )
 

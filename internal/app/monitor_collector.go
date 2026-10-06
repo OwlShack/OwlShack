@@ -11,11 +11,11 @@ import (
 
 	meshcore "github.com/meshcore-go/meshcore-go"
 
-	"github.com/meshcore-go/OwlShack/internal/client/repeater"
-	"github.com/meshcore-go/OwlShack/internal/monitor"
-	"github.com/meshcore-go/OwlShack/internal/node/companion"
-	"github.com/meshcore-go/OwlShack/internal/store"
-	"github.com/meshcore-go/OwlShack/internal/telemetry"
+	"github.com/OwlShack/OwlShack/internal/client/repeater"
+	"github.com/OwlShack/OwlShack/internal/monitor"
+	"github.com/OwlShack/OwlShack/internal/node/companion"
+	"github.com/OwlShack/OwlShack/internal/store"
+	"github.com/OwlShack/OwlShack/internal/telemetry"
 )
 
 // Per-request timeouts for a monitor poll; login is a flood round-trip, so it gets more.

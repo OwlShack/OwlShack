@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/meshcore-go/OwlShack/internal/api"
-	"github.com/meshcore-go/OwlShack/internal/store"
+	"github.com/OwlShack/OwlShack/internal/api"
+	"github.com/OwlShack/OwlShack/internal/store"
 )
 
 // Restore is a whole-file swap, so it is reachable only from the setup wizard: merging into a live node collides.
