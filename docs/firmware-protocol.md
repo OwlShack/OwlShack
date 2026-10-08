@@ -472,7 +472,7 @@ existing `MessageGroup` sender rendering already handles that.
   - `keepalive` → `SendRoomKeepAlive`: REQ 0x02 `[tag][0x02][since:4]`, sent
     **direct only** (the firmware ignores flooded keep-alives and answers with
     a direct ACK carrying its unsynced count), after which posts resume through
-    the normal DM path. Fire-and-forget; "Resync posts" on the Status tab.
+    the normal DM path. Fire-and-forget; "Resume posts" in the room thread's menu.
   - Everything else (CLI, ACL, telemetry, path) is the shared type-agnostic
     surface. Firmware facts the page encodes: login outcomes are admin password
     → admin, `guest.password` (the *room* password) → read-write, otherwise

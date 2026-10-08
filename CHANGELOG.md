@@ -86,6 +86,9 @@ top until tagged.
 - **A region has to be in your Settings list before anything can use it**, and it can't be
   removed from the list while a companion, channel, contact or bot still sends in it. The
   message says which ones to change first.
+- **Resume a room's posts from its thread.** When posts stop arriving, the thread menu's "Resume
+  posts" asks the room to carry on from the last one you got; it doesn't fetch posts from before
+  that. It replaces "Resync posts" on the room's Status tab.
 
 ### Fixed
 
