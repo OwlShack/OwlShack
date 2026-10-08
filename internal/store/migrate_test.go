@@ -12,7 +12,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
+	meshcore "github.com/OwlShack/meshcore-go"
 )
 
 var releaseMigrations = flag.String("release-migrations", "", "record every unlisted migration file in migrations.sum as shipped in this release tag")

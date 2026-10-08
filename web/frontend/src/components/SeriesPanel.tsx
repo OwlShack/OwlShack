@@ -5,6 +5,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { cn } from "@/lib/utils";
 import { apiErrorMessage } from "@/lib/apiError";
 import { formatDateTime } from "@/lib/format";
+import { useRemoteFetch } from "@/lib/remoteFetch";
 
 interface SeriesEntry {
   channel: number;
@@ -35,13 +36,14 @@ export function SeriesPanel({ apiBase }: { apiBase: string }) {
   const [data, setData] = useState<Series | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const remoteFetch = useRemoteFetch();
 
   const request = useCallback(
     async (w = win) => {
       setLoading(true);
       setErr(null);
       try {
-        const r = await fetch(`${apiBase}/history?from=${w.secs}&to=0`);
+        const r = await remoteFetch(`${apiBase}/history?from=${w.secs}&to=0`);
         if (!r.ok) throw new Error(await apiErrorMessage(r));
         setData((await r.json()) as Series);
       } catch (e) {
@@ -50,7 +52,7 @@ export function SeriesPanel({ apiBase }: { apiBase: string }) {
         setLoading(false);
       }
     },
-    [apiBase, win],
+    [apiBase, win, remoteFetch],
   );
 
   return (

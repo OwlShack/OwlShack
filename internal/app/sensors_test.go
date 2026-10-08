@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
+	meshcore "github.com/OwlShack/meshcore-go"
 
 	"github.com/OwlShack/OwlShack/internal/api"
 	"github.com/OwlShack/OwlShack/internal/config"
@@ -344,7 +344,7 @@ func TestCompanionTelemetryModes_SurviveAnEditAndAReload(t *testing.T) {
 		t.Fatal(err)
 	}
 	b := &backend{db: db}
-	id, err := b.SaveCompanion(ctx, api.CompanionInput{Name: "home"})
+	id, err := b.SaveCompanion(ctx, api.CompanionInput{Name: "home", FloodScope: "inherit"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -372,7 +372,7 @@ func TestCompanionTelemetryModes_SurviveAnEditAndAReload(t *testing.T) {
 	}
 	// Checked before the edit too: a swapped scan swaps back when the edit writes what it read.
 	check("once set")
-	if _, err := b.SaveCompanion(ctx, api.CompanionInput{ID: id, Name: "home renamed"}); err != nil {
+	if _, err := b.SaveCompanion(ctx, api.CompanionInput{ID: id, Name: "home renamed", FloodScope: "inherit"}); err != nil {
 		t.Fatal(err)
 	}
 	check("after an edit")

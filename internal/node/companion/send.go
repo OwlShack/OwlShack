@@ -5,18 +5,23 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"time"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
-	"github.com/meshcore-go/meshcore-go/node"
+	meshcore "github.com/OwlShack/meshcore-go"
+	"github.com/OwlShack/meshcore-go/node"
 
+	"github.com/OwlShack/OwlShack/internal/config"
+	"github.com/OwlShack/OwlShack/internal/meshpath"
 	"github.com/OwlShack/OwlShack/internal/store"
 )
 
-// MaxDMTextBytes is the firmware's MAX_TEXT_LEN (10 * CIPHER_BLOCK_SIZE), less the 2 bytes a
-// retry past attempt 3 appends, so a message that sends can also be retried.
-const MaxDMTextBytes = 10*16 - 2
+// MaxDMTextBytes is the longest DM that every retry still fits, so a message that sends can also be retried.
+const MaxDMTextBytes = meshcore.MaxRetryTextLen
+
+// ErrUnknownChannel is a send to a channel this companion doesn't have.
+var ErrUnknownChannel = errors.New("channel not found")
 
 // uniqueTimestamp mirrors the firmware's getCurrentTimeUnique(): a remote node drops a second post sharing a timestamp as a retry.
 func (c *Companion) uniqueTimestamp() uint32 { return c.repeaters.UniqueTimestamp() }
@@ -24,13 +29,13 @@ func (c *Companion) uniqueTimestamp() uint32 { return c.repeaters.UniqueTimestam
 func (c *Companion) SendChannelMessage(channelName, text string) error {
 	ch := c.findChannel(channelName)
 	if ch == nil {
-		return fmt.Errorf("channel %q not found", channelName)
+		return fmt.Errorf("%w: %q", ErrUnknownChannel, channelName)
 	}
-	return c.sendGroupReply(ch, text, c.pathHashSize(), 5*time.Second, 3)
+	return c.sendGroupReply(ch, text, c.pathHashSize(), 5*time.Second, 3, c.channelScope(ch.Name))
 }
 
 // sendGroupReply is the shared send path for the chat API and trigger replies, so bot replies are persisted, broadcast and echo-tracked like manual sends.
-func (c *Companion) sendGroupReply(ch *meshcore.ChannelEntry, text string, hashSize uint8, retryTimeout time.Duration, maxRetries int) error {
+func (c *Companion) sendGroupReply(ch *meshcore.ChannelEntry, text string, hashSize uint8, retryTimeout time.Duration, maxRetries int, scope config.FloodScope) error {
 	payload := &meshcore.GroupTextPayload{
 		Timestamp: c.uniqueTimestamp(),
 		Sender:    c.cfg.Name,
@@ -47,6 +52,7 @@ func (c *Companion) sendGroupReply(ch *meshcore.ChannelEntry, text string, hashS
 		Direction:   "tx",
 		Timestamp:   now,
 		ReceivedAt:  now,
+		FloodScope:  string(scope),
 	}
 
 	c.store.WriteSync(func() {
@@ -68,6 +74,7 @@ func (c *Companion) sendGroupReply(ch *meshcore.ChannelEntry, text string, hashS
 			"timestamp":   msg.Timestamp.UTC().Format(time.RFC3339),
 			"receivedAt":  msg.ReceivedAt.UTC().Format(time.RFC3339),
 			"id":          msgID,
+			"floodScope":  msg.FloodScope,
 		})
 	}
 
@@ -76,22 +83,50 @@ func (c *Companion) sendGroupReply(ch *meshcore.ChannelEntry, text string, hashS
 	c.pendingOutbound.channel = ch.Name
 	c.pendingOutbound.Unlock()
 
-	return c.node.SendGroupText(
-		ch, payload, hashSize, retryTimeout, maxRetries,
+	err := c.node.SendGroupTextScoped(
+		ch, scope.MeshRegion(), payload, hashSize, retryTimeout, maxRetries,
 		func(gsr node.GroupSendResult) {
 			c.log.Debug("group reply result", "channel", ch.Name, "confirmed", gsr.Confirmed)
 		},
 	)
+	if err != nil { // never sent, so the row already shown must not read as sent, nor take an earlier post's echoes
+		c.pendingOutbound.Lock()
+		if c.pendingOutbound.msgID == msgID {
+			c.pendingOutbound.msgID, c.pendingOutbound.channel = 0, ""
+		}
+		c.pendingOutbound.Unlock()
+		c.setMessageStatus(msgID, ch.Name, "failed")
+	}
+	return err
+}
+
+// setMessageStatus records an outgoing message's status and tells the open chats.
+func (c *Companion) setMessageStatus(msgID int64, channel, status string) {
+	c.store.WriteAsync(func() {
+		if err := c.store.Messages.UpdateStatus(context.Background(), msgID, status); err != nil {
+			c.log.Error("failed to update message status", "id", msgID, "error", err)
+		}
+	})
+	if c.hub != nil {
+		c.hub.Broadcast("messages", map[string]any{
+			"action":      "status",
+			"companion":   c.cfg.Name,
+			"companionId": c.cfg.ID,
+			"channel":     channel,
+			"id":          msgID,
+			"status":      status,
+		})
+	}
 }
 
 // SendContactMessage is the chat API's DM send: a flood or 0-hop DM goes out at the contact's bytes per hop.
 func (c *Companion) SendContactMessage(pubkeyHex, text string) error {
-	return c.sendDM(pubkeyHex, text, c.bytesPerHopHex(pubkeyHex), 5*time.Second)
+	return c.sendDM(pubkeyHex, text, c.bytesPerHopHex(pubkeyHex), 5*time.Second, c.contactScopeHex(pubkeyHex))
 }
 
 // sendDMReply is a DM trigger's answer: the trigger's pathHashSize frames it only when no route is stored, since a stored path already fixes its own hash width.
-func (c *Companion) sendDMReply(pubkeyHex, text string, hashSize uint8, ackTimeout time.Duration) error {
-	return c.sendDM(pubkeyHex, text, hashSize, ackTimeout)
+func (c *Companion) sendDMReply(pubkeyHex, text string, hashSize uint8, ackTimeout time.Duration, scope config.FloodScope) error {
+	return c.sendDM(pubkeyHex, text, hashSize, ackTimeout, scope)
 }
 
 // dmAckTimeout mirrors the firmware's calcFloodTimeoutMillisFor / calcDirectTimeoutMillisFor
@@ -126,7 +161,7 @@ func (c *Companion) dmAckTimeout(textLen int, outPath []byte, hashSize uint8, fl
 	return max(timeout, floor)
 }
 
-func (c *Companion) sendDM(pubkeyHex, text string, fallbackHashSize uint8, ackTimeout time.Duration) error {
+func (c *Companion) sendDM(pubkeyHex, text string, fallbackHashSize uint8, ackTimeout time.Duration, scope config.FloodScope) error {
 	pubkeyBytes, err := hex.DecodeString(pubkeyHex)
 	if err != nil {
 		return fmt.Errorf("invalid pubkey hex: %w", err)
@@ -139,7 +174,7 @@ func (c *Companion) sendDM(pubkeyHex, text string, fallbackHashSize uint8, ackTi
 
 	// The UI counts characters; the wire counts bytes, and a retry past attempt 3 appends 2 more.
 	if len(text) > MaxDMTextBytes {
-		return fmt.Errorf("message is %d bytes, over the %d-byte limit (multibyte characters cost more than one)", len(text), MaxDMTextBytes)
+		return fmt.Errorf("%w: message is %d bytes, over the %d-byte limit (multibyte characters cost more than one)", node.ErrTextTooLong, len(text), MaxDMTextBytes)
 	}
 
 	// SendTextMessage treats a nil path as a flood, so an unrouted contact still sends.
@@ -168,6 +203,7 @@ func (c *Companion) sendDM(pubkeyHex, text string, fallbackHashSize uint8, ackTi
 		Timestamp:   now,
 		ReceivedAt:  now,
 		Status:      &statusSending,
+		FloodScope:  string(scope),
 	}
 
 	c.store.WriteSync(func() {
@@ -188,12 +224,14 @@ func (c *Companion) sendDM(pubkeyHex, text string, fallbackHashSize uint8, ackTi
 			"receivedAt":  msg.ReceivedAt.UTC().Format(time.RFC3339),
 			"id":          msg.ID,
 			"status":      "sending",
+			"floodScope":  msg.FloodScope,
 		})
 	}
 
 	msgID := msg.ID
-	return c.node.SendTextMessage(
+	err = c.node.SendTextMessageScoped(
 		peerIdentity,
+		scope.MeshRegion(),
 		[]byte(text),
 		0,
 		time.Unix(int64(c.uniqueTimestamp()), 0),
@@ -221,24 +259,13 @@ func (c *Companion) sendDM(pubkeyHex, text string, fallbackHashSize uint8, ackTi
 				}
 			}
 
-			c.store.WriteAsync(func() {
-				if err := c.store.Messages.UpdateStatus(context.Background(), msgID, status); err != nil {
-					c.log.Error("failed to update message status", "id", msgID, "error", err)
-				}
-			})
-
-			if c.hub != nil {
-				c.hub.Broadcast("messages", map[string]any{
-					"action":      "status",
-					"companion":   c.cfg.Name,
-					"companionId": c.cfg.ID,
-					"channel":     channelKey,
-					"id":          msgID,
-					"status":      status,
-				})
-			}
+			c.setMessageStatus(msgID, channelKey, status)
 		},
 	)
+	if err != nil { // the library reports no result for a send it refused outright
+		c.setMessageStatus(msgID, channelKey, "failed")
+	}
+	return err
 }
 
 func (c *Companion) SendTrace(path []byte, pathHashSize uint8) (uint32, error) {
@@ -300,7 +327,7 @@ func (c *Companion) sendTracePacket(tag, auth uint32, path []byte, pathHashSize 
 		Payload:    payload,
 	}
 
-	if err := c.node.SendPacket(&pkt); err != nil {
+	if err := meshpath.Send(c.node, &pkt, nil, 0); err != nil {
 		return fmt.Errorf("sending trace: %w", err)
 	}
 

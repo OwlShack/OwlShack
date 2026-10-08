@@ -143,6 +143,7 @@ export function SetupWizard({
           latitude: lat === "" ? null : parseFloat(lat) || 0,
           longitude: lon === "" ? null : parseFloat(lon) || 0,
           privateKey: privateKey.trim() || undefined,
+          floodScope: "inherit",
           advertInterval: advertInterval.trim()
             ? parseInt(advertInterval, 10) || 0
             : undefined,

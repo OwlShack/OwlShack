@@ -7,7 +7,7 @@ import (
 
 	"github.com/OwlShack/OwlShack/internal/config"
 	"github.com/OwlShack/OwlShack/internal/trigger"
-	meshcore "github.com/meshcore-go/meshcore-go"
+	meshcore "github.com/OwlShack/meshcore-go"
 )
 
 func identityFromHexSeed(seedHex string) (meshcore.LocalIdentity, error) {
@@ -23,7 +23,7 @@ func channelFromRef(ref config.ChannelRef) (*meshcore.ChannelEntry, error) {
 		return meshcore.NewChannelFromPSK(ref.Name, psk)
 	}
 	if strings.EqualFold(ref.Name, "Public") {
-		return meshcore.NewChannelFromBase64("Public", "izOH6cXN6mrJ5e26oRXNcg==")
+		return meshcore.PublicChannel(), nil
 	}
 	nCh := meshcore.NormalizeHashtag(ref.Name)
 	return meshcore.NewChannelFromHashtag(nCh), nil

@@ -3,10 +3,10 @@ package companion
 import (
 	"time"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
-	"github.com/meshcore-go/meshcore-go/node"
+	meshcore "github.com/OwlShack/meshcore-go"
 
 	"github.com/OwlShack/OwlShack/internal/config"
+	"github.com/OwlShack/OwlShack/internal/meshpath"
 	"github.com/OwlShack/OwlShack/internal/sensor"
 )
 
@@ -144,7 +144,7 @@ func (c *Companion) sendReqReply(reqPkt *meshcore.Packet, peerPubKey, secret, pl
 		if err != nil {
 			return err
 		}
-		return c.node.SendPacketDelayed(reply, node.PriorityFloodRelay, serverReplyDelay)
+		return meshpath.Send(c.node, reply, c.contactScope(peerPubKey).MeshRegion(), serverReplyDelay)
 	}
 
 	encrypted, err := meshcore.EncryptThenMAC(secret, plaintext)
@@ -164,7 +164,7 @@ func (c *Companion) sendReqReply(reqPkt *meshcore.Packet, peerPubKey, secret, pl
 	size := c.bytesPerHop(peerPubKey)
 	reply := &meshcore.Packet{
 		Header:     meshcore.MakeHeader(meshcore.RouteTypeFlood, meshcore.PayloadTypeResponse, 0),
-		PathLength: (size - 1) << 6,
+		PathLength: meshcore.MakePathLen(size, 0),
 		Payload:    payload,
 	}
 	if outPath, hs, ok := c.learnedRoute(peerPubKey); ok {
@@ -173,7 +173,7 @@ func (c *Companion) sendReqReply(reqPkt *meshcore.Packet, peerPubKey, secret, pl
 		}
 		reply.Header = meshcore.MakeHeader(meshcore.RouteTypeDirect, meshcore.PayloadTypeResponse, 0)
 		reply.Path = outPath
-		reply.PathLength = (hs-1)<<6 | byte(len(outPath)/int(hs))
+		reply.PathLength = meshcore.MakePathLen(hs, uint8(len(outPath)/int(hs)))
 	}
-	return c.node.SendPacketDelayed(reply, node.PrioritySend, serverReplyDelay)
+	return meshpath.Send(c.node, reply, c.contactScope(peerPubKey).MeshRegion(), serverReplyDelay)
 }

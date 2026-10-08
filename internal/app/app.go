@@ -29,8 +29,8 @@ import (
 	"github.com/OwlShack/OwlShack/internal/store"
 	"github.com/OwlShack/OwlShack/internal/trigger"
 	"github.com/OwlShack/OwlShack/web"
-	meshcore "github.com/meshcore-go/meshcore-go"
-	"github.com/meshcore-go/meshcore-go/node"
+	meshcore "github.com/OwlShack/meshcore-go"
+	"github.com/OwlShack/meshcore-go/node"
 )
 
 const defaultListenAddr = ":8080"
@@ -87,6 +87,7 @@ func Run(ctx context.Context, importPath string, verbosity int) error {
 	if err != nil {
 		return fmt.Errorf("resolving config: %w", err)
 	}
+	setFloodLabels(cfg)
 
 	if err := seedListenAddr(ctx, db, cfg); err != nil {
 		return fmt.Errorf("listen address: %w", err)
@@ -157,6 +158,7 @@ func Run(ctx context.Context, importPath string, verbosity int) error {
 	// Loaded once here and refreshed on save, so a telemetry reply never waits on the database.
 	telemetry := newTelemetryPublisher(sensorHub)
 	feedPreview := trigger.NewFeedPreview()
+	regionScan := &regionScanner{}
 	if err := telemetry.Load(ctx, db); err != nil {
 		return err
 	}
@@ -236,7 +238,7 @@ func Run(ctx context.Context, importPath string, verbosity int) error {
 		srv.SetBackend(&backend{
 			companions: companions, repeater: rep, db: db, stats: statsOf(ms), mux: mux,
 			reload: reload, resetModem: resetModem, discover: disc, sensors: sensorHub, telemetry: telemetry,
-			feedPreview: feedPreview,
+			feedPreview: feedPreview, regionScan: regionScan,
 		})
 	}
 
@@ -295,6 +297,7 @@ func Run(ctx context.Context, importPath string, verbosity int) error {
 				slog.Error("config reload failed, keeping current config", "error", err)
 				continue
 			}
+			setFloodLabels(newCfg)
 			// Zero companions is allowed (observer-only / wizard skip); reloadCompanions then starts none.
 
 			newLogLevel := ""
@@ -461,7 +464,7 @@ func reloadCompanions(ctx context.Context, oldCfg, newCfg *config.Config, runnin
 			companions = append(companions, p.reuse)
 			continue
 		}
-		c, err := companion.NewCompanion(p.block, mux, db, hub, echoTracker, ms.Stats, ms.ParseErrors)
+		c, err := companion.NewCompanion(p.block, mux, db, hub, echoTracker, ms.Stats, ms.ParseErrors, floodScopeOf)
 		if err != nil {
 			stopAll()
 			return nil, stats, fmt.Errorf("creating companion %q: %w", p.block.Name, err)
@@ -514,6 +517,7 @@ func effectiveCompanionConfigs(cfg *config.Config) []config.CompanionConfig {
 		if blocks[i].PathHashSize == nil {
 			blocks[i].PathHashSize = &pathHash
 		}
+		blocks[i].FloodScope = config.ResolveScope(blocks[i].FloodScope, cfg.FloodScope)
 	}
 	return blocks
 }

@@ -66,20 +66,56 @@ The node we run (`internal/node/repeater`) is measured against MeshCore 1.17.1
   the serial-only commands, hint-tagged "(serial only)".
 - **`set radio` / `set tx` are OTA commands upstream; we deliberately refuse
   them** — the modem is shared with the companion and its settings live in app
-  config. This is our one intentional divergence.
-- **Regions are flat** (name + denyFlood), not the firmware's parent tree, so
-  `region def` is unsupported and `region get` never prints a parent.
+  config. The region items below are the only other divergences.
+- **Regions form the firmware's tree**: each keeps its parent by name (`*` at
+  the top), for organising only, as `RegionMap::findMatch` ignores parents.
   Keys follow `getTransportKeysFor`: `#name` hashes as given, a bare name as
   `#name` (MeshCore 7ae16421), and a `$` private region gets no key, so it
   never matches. `*` is the firmware's wildcard: always there, allowing flood
   until denied, so a config with no `*` entry relays unscoped flood, and the
   REST API refuses to remove it as the firmware does.
-  `region save` returns OK because `reconfigure` already persisted; `region load`
-  replies nothing, as the firmware's async reload does. `region list` and
+  `region put <name> [parent]` adds or moves a region, `region remove` refuses
+  one with sub-regions (`Err - not empty`), `region get` prints ` name (parent) F`
+  below the top, and `region def a b|jump c` puts each name under the one before
+  it (or the jump). `region save` returns OK because `reconfigure` already
+  persisted. `region load` replies nothing, then takes every following command
+  as a tree line (indent = depth, a trailing `F` allows flood for a new region,
+  an existing one keeps its flags) until a blank line swaps the tree in and
+  replies `OK - loaded N regions`. The remote-admin client refuses to send
+  `region load`: it reads lines before stripping our `XX|` tag, so a firmware
+  repeater would swallow every later command until rebooted. `region list` and
   `regionsExport` are comma-separated (`region list` includes `*` and prints
   `-none-` when empty); bare `region` is the newline-terminated tree
   (`regionTree`, mirroring `RegionMap::exportTo` — wildcard first, children
-  indented one space, `^` = home (on `*` when unset), ` F` = flood allowed).
+  indented one space per level, `^` = home (on `*` when unset), ` F` = flood
+  allowed, cut at 159 bytes).
+- **Region divergences, each where the firmware would end in a broken state:**
+  `region put` refuses to move a region under its own sub-region (the firmware
+  accepts it and the region drops out of its tree), and the end of `region load`
+  keeps `*`'s flood setting and the home region, which the firmware's temp map
+  resets (re-opening unscoped flood on a repeater that denied it). `region default $x` is
+  refused too: we can't load a private region's keys, so its adverts would go unscoped.
+  A `#nz` default is stored as `region:nz`, which keys the same. Removing the
+  default region, or a `region load` without it, sets the default to `<null>`: the
+  firmware keeps sending in it until a reboot finds no region, and its load always
+  drops the default.
+  **Reading a remote node's regions** (`client/repeater/region_map.go`): `region`
+  gives the tree; a reply of 159 bytes was cut, so the name lists fill in the
+  rest and `region get` each missing one's parent. A list of 127 bytes or more
+  may have skipped a name (`exportNamesTo` drops what does not fit), and a lost
+  `region get` leaves its region out; either is reported as `partial`. The read
+  stops between commands when the HTTP request is gone. `region home` is always
+  asked next: a name may end in `^` as the home marker does, so only the line
+  equal to the home plus `^` is the home, and when two lines read so (home `a`
+  and a region `a^`) every region is read with `region get` instead. `region
+  default` is asked before the lists, so a node that goes quiet during them still
+  leaves a `partial` map; two missed `region get` replies in a row end the read.
+  The tree and lists print names without `#` (firmware before v1.12 has no remote
+  tree), but `region home`, `get` and `default` print the stored name, so a leading
+  `#` is dropped; `get` falls back to a prefix match, so a reply naming another
+  region counts as not found. The Regions tab sends each change at once and `region
+  save` on Save, as the MeshCore app does; a move re-sends `denyf`, as `put`
+  allows flood again on firmware 1.15+.
   Lookups are exact-then-prefix (`findByNamePrefix`); `region home` replies
   `" home is now X"` / `" home is X"`; `put` on an existing region re-allows
   flood (`OK - (flood allowed)`); `remove *` → `Err - not empty`. `region

@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/meshcore-go/meshcore-go/hardware/sx12xx"
+	"github.com/OwlShack/meshcore-go/hardware/sx12xx"
 
 	"github.com/OwlShack/OwlShack/internal/config"
 )

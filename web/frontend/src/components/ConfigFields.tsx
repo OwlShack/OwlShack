@@ -76,7 +76,8 @@ export function SelectField({
 }: {
   label: string;
   value: string;
-  options: { value: string; label: string }[];
+  // depth indents an option under the one before it, for a list that is a tree.
+  options: { value: string; label: string; depth?: number }[];
   onChange: (v: string) => void;
   hint?: React.ReactNode;
   disabled?: boolean;
@@ -85,23 +86,31 @@ export function SelectField({
   const known = options.some((o) => o.value === value);
   return (
     <Field label={label} hint={hint}>
-      <Select value={toSelect(value)} onValueChange={(v) => onChange(v === EMPTY ? "" : v)} disabled={disabled}>
-        <SelectTrigger className="h-9 w-full font-mono text-sm rounded-none border-border bg-background">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent className="rounded-sm">
-          {!known && value !== "" && (
-            <SelectItem value={value} className="font-mono text-sm">
-              {value} (custom)
-            </SelectItem>
-          )}
-          {options.map((o) => (
-            <SelectItem key={o.value} value={toSelect(o.value)} className="font-mono text-sm">
-              {o.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      {/* Inside a form Radix adds a hidden native select; the div keeps it from being Field's last child, which takes the trigger's space-y margin. */}
+      <div>
+        <Select value={toSelect(value)} onValueChange={(v) => onChange(v === EMPTY ? "" : v)} disabled={disabled}>
+          <SelectTrigger className="h-9 w-full font-mono text-sm rounded-none border-border bg-background">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent className="rounded-sm">
+            {!known && value !== "" && (
+              <SelectItem value={value} className="font-mono text-sm">
+                {value} (custom)
+              </SelectItem>
+            )}
+            {options.map((o) => (
+              <SelectItem
+                key={o.value}
+                value={toSelect(o.value)}
+                className="font-mono text-sm"
+                style={o.depth ? { paddingLeft: `${0.5 + o.depth * 1.25}rem` } : undefined}
+              >
+                {o.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
     </Field>
   );
 }

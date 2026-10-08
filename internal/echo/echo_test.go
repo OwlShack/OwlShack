@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
+	meshcore "github.com/OwlShack/meshcore-go"
 )
 
 // TestPrune: entries past ttl are dropped, fresh ones kept.

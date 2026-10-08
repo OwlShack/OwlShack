@@ -6,14 +6,15 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"math"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
-	"github.com/meshcore-go/meshcore-go/hardware"
-	"github.com/meshcore-go/meshcore-go/node"
+	meshcore "github.com/OwlShack/meshcore-go"
+	"github.com/OwlShack/meshcore-go/hardware"
+	"github.com/OwlShack/meshcore-go/node"
 
 	"github.com/OwlShack/OwlShack/internal/api"
 	"github.com/OwlShack/OwlShack/internal/config"
@@ -60,7 +61,7 @@ type Repeater struct {
 	logging     atomic.Bool // `log start/stop` — per-packet trace to the bot log
 
 	// Cached modem readings, refreshed by deviceStatsLoop.
-	noiseFloor      atomic.Int32
+	noiseFloor      atomic.Int32 // noNoiseFloor until the radio has measured one
 	batteryMV       atomic.Uint32
 	haveBattery     atomic.Bool
 	haveDeviceStats atomic.Bool
@@ -102,6 +103,8 @@ type Repeater struct {
 	}
 
 	lastTS atomic.Uint32 // last timestamp we stamped (firmware getCurrentTimeUnique)
+
+	regionLoad *regionLoad // non-nil between `region load` and the blank line ending it; guarded by mu
 
 	mu     sync.Mutex
 	cancel context.CancelFunc
@@ -185,6 +188,8 @@ func NewRepeater(cfg config.RepeaterConfig, mux *node.RadioMux, st *store.Store,
 		node.WithExtraAckTransmitCount(r.extraAcks),
 		// A node with no allowForward handler never relays — this is what makes it a repeater.
 		node.WithAllowForwardHandler(r.allowForward),
+		// Firmware repeaters never answer a client's flood PATH with their own; handlePath learns the route.
+		node.WithoutReciprocalPath(),
 	}
 	// Registering named scopes is what lets FindFloodMatch relay their transport-flood packets.
 	named, wildcardFlags := regionsFromConfig(cfg.Regions)
@@ -193,7 +198,7 @@ func NewRepeater(cfg config.RepeaterConfig, mux *node.RadioMux, st *store.Store,
 	}
 	r.node = node.New(id, radio, opts...)
 	r.routeStats = r.node.RouteStats
-	r.node.Regions().SetWildcardFlags(wildcardFlags) // "*" entry ⇒ relay unscoped flood; absent ⇒ don't
+	r.node.Regions().SetWildcardFlags(wildcardFlags)
 
 	r.registerHandlers()
 
@@ -245,6 +250,20 @@ func (r *Repeater) Start(ctx context.Context) error {
 	return nil
 }
 
+// cacheDeviceStats keeps the latest board readings for the stats API and the over-mesh STATUS reply.
+func (r *Repeater) cacheDeviceStats(ds DeviceStats) {
+	nf := int32(noNoiseFloor)
+	if ds.HaveNoiseFloor {
+		nf = int32(ds.NoiseFloor)
+	}
+	r.noiseFloor.Store(nf)
+	r.batteryMV.Store(uint32(ds.BatteryMV))
+	r.haveBattery.Store(ds.HaveBattery)
+	r.mcuTempC.Store(int32(ds.MCUTempC * 10))
+	r.haveMCUTemp.Store(ds.HaveMCUTemp)
+	r.haveDeviceStats.Store(true)
+}
+
 // deviceStatsLoop refreshes the cached readings because pollStats blocks ~500ms and can't run on the packet path.
 func (r *Repeater) deviceStatsLoop(ctx context.Context) {
 	const interval = 60 * time.Second
@@ -253,14 +272,7 @@ func (r *Repeater) deviceStatsLoop(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		r.noiseFloor.Store(int32(ds.NoiseFloor))
-		r.batteryMV.Store(uint32(ds.BatteryMV))
-		r.haveBattery.Store(ds.HaveBattery)
-		if ds.HaveMCUTemp {
-			r.mcuTempC.Store(int32(ds.MCUTempC * 10))
-			r.haveMCUTemp.Store(true)
-		}
-		r.haveDeviceStats.Store(true)
+		r.cacheDeviceStats(ds)
 	}
 	refresh()
 	t := time.NewTicker(interval)
@@ -285,7 +297,7 @@ func (r *Repeater) Stop() error {
 	return nil
 }
 
-// regionsFromConfig keys each named region as the firmware's getTransportKeysFor does; "*" is never a named region.
+// regionsFromConfig keys each named region as the firmware's getTransportKeysFor does (NewRegion); "*" is never a named region.
 func regionsFromConfig(cfg []config.RepeaterRegion) (named []*meshcore.Region, wildcardFlags uint8) {
 	for _, rg := range cfg {
 		if rg.Name == config.WildcardRegion {
@@ -294,11 +306,7 @@ func regionsFromConfig(cfg []config.RepeaterRegion) (named []*meshcore.Region, w
 			}
 			continue
 		}
-		key, ok := regionKey(rg.Name)
-		if !ok {
-			continue
-		}
-		reg := meshcore.NewRegionFromKey(rg.Name, key)
+		reg := meshcore.NewRegion(rg.Name)
 		if rg.DenyFlood {
 			reg.Flags |= meshcore.RegionDenyFlood
 		}
@@ -307,20 +315,8 @@ func regionsFromConfig(cfg []config.RepeaterRegion) (named []*meshcore.Region, w
 	return named, wildcardFlags
 }
 
-// regionKey is RegionMap::getTransportKeysFor: "#name" hashes as given, a bare name as "#name", and a "$" private region has no key we can know.
-func regionKey(name string) (meshcore.RegionKey, bool) {
-	switch {
-	case strings.HasPrefix(name, "$"):
-		return meshcore.RegionKey{}, false
-	case strings.HasPrefix(name, "#"):
-		return meshcore.DeriveRegionKey(name), true
-	default:
-		return meshcore.DeriveRegionKey("#" + name), true
-	}
-}
-
 // ApplyRegions updates regions in place so a region-only edit doesn't restart the node and wipe neighbours, routes and counters.
-func (r *Repeater) ApplyRegions(regions []config.RepeaterRegion, defaultRegion, homeRegion string) {
+func (r *Repeater) ApplyRegions(regions []config.RepeaterRegion, scope config.FloodScope, homeRegion string) {
 	named, wildcardFlags := regionsFromConfig(regions)
 	rm := r.node.Regions()
 	rm.SetWildcardFlags(wildcardFlags)
@@ -348,7 +344,7 @@ func (r *Repeater) ApplyRegions(regions []config.RepeaterRegion, defaultRegion, 
 
 	r.mu.Lock()
 	r.cfg.Regions = regions
-	r.cfg.DefaultRegion = defaultRegion
+	r.cfg.FloodScope = scope
 	r.cfg.HomeRegion = homeRegion
 	r.mu.Unlock()
 }
@@ -388,13 +384,17 @@ func (l *rateLimiter) allow() bool {
 	return true
 }
 
+// noNoiseFloor marks a noise floor not yet measured, kept in the same atomic so a reader never pairs a value with the wrong flag.
+const noNoiseFloor = math.MinInt32
+
 // DeviceStats are the shared modem's board readings, polled for the over-mesh
 // STATUS and telemetry replies. HaveMCUTemp is false when the board can't
 // measure one, and HaveBattery false when there is no cell, so 0 is never mistaken for a reading.
 type DeviceStats struct {
-	NoiseFloor  int16
-	BatteryMV   uint16
-	HaveBattery bool
-	MCUTempC    float64
-	HaveMCUTemp bool
+	NoiseFloor     int16
+	HaveNoiseFloor bool
+	BatteryMV      uint16
+	HaveBattery    bool
+	MCUTempC       float64
+	HaveMCUTemp    bool
 }

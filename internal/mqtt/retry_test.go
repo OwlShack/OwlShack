@@ -13,9 +13,9 @@ import (
 	"time"
 
 	"github.com/OwlShack/OwlShack/internal/config"
+	meshcore "github.com/OwlShack/meshcore-go"
+	"github.com/OwlShack/meshcore-go/node"
 	paho "github.com/eclipse/paho.mqtt.golang"
-	meshcore "github.com/meshcore-go/meshcore-go"
-	"github.com/meshcore-go/meshcore-go/node"
 )
 
 // fakeBroker answers MQTT 3.1.1 CONNECT with CONNACK and ACKs what it can, which is all paho's Connect needs.

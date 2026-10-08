@@ -5,7 +5,7 @@ import (
 	"math"
 	"testing"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
+	meshcore "github.com/OwlShack/meshcore-go"
 )
 
 // putFloat mirrors the firmware encoder so the test is a genuine round trip, not a restatement of the decoder.
@@ -116,5 +116,15 @@ func TestParseSeries_BlockPadding(t *testing.T) {
 	}
 	if s.Entries[0].Min != 20 || s.Entries[0].Max != 30 || s.Entries[0].Avg != 25 {
 		t.Errorf("temp = %v/%v/%v; want 20/30/25", s.Entries[0].Min, s.Entries[0].Max, s.Entries[0].Avg)
+	}
+}
+
+// The firmware decodes into a uint32, so a 6- or 9-byte value keeps only its low 4 bytes (LPPDataHelpers.h getFloat).
+func TestLPPGetFloat_KeepsTheLowFourBytesLikeFirmware(t *testing.T) {
+	if got := lppGetFloat([]byte{0xAA, 0xBB, 0x00, 0x00, 0x01, 0x00}, 100, true); got != 2.56 {
+		t.Errorf("6-byte value = %v, want 2.56", got)
+	}
+	if got := lppGetFloat([]byte{0xFF, 0xFE}, 100, true); got != -0.02 {
+		t.Errorf("signed 2-byte value = %v, want -0.02", got)
 	}
 }

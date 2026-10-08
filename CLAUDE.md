@@ -26,7 +26,7 @@ regenerates `web/frontend/src/data/radio-presets.json` from it; don't hand-edit)
 |---|---|
 | Backend | Go 1.26+, **no CGO**, `modernc.org/sqlite`, `embed.FS` for the SPA |
 | Frontend | **React 19** (not Preact) + Vite 6 + TS 5.7, Tailwind v4, shadcn/ui (new-york), `react-router-dom@7`, `sonner`, Leaflet |
-| Mesh proto | `github.com/meshcore-go/meshcore-go` v1.6.0 (plus `hardware/transport`, `hardware/sx12xx` and `hardware/openhop` at the same tag), pinned in `go.mod`. **No `go.work`** — add one only for lockstep library work and delete it before pushing; `GOWORK=off go build ./...` is the check |
+| Mesh proto | `github.com/OwlShack/meshcore-go` v1.7.0 (plus `hardware/transport`, `hardware/sx12xx` and `hardware/openhop` at the same tag), pinned in `go.mod`. **No `go.work`** — add one only for lockstep library work and delete it before pushing; `GOWORK=off go build ./...` is the check |
 | Real-time | WS `/api/ws`, topics `peers` `packets` `messages` `traces` `repeaterNeighbors` `discovered` `sensors` |
 | Local sensors | `periph.io/x/conn` + `periph.io/x/host` for I2C; `github.com/expr-lang/expr` for derived sensors |
 | Config | SQLite relational tables; config files are one-time imports |
@@ -236,7 +236,6 @@ is the place to look.
 - Settings-section CLI `get`s run sequentially on purpose (half-duplex radio), though the client *could* correlate concurrent commands.
 - Go tests cover 23 packages; radio-facing paths are still manual. No frontend tests.
 - `MESHCORE_APP_FEATURES.md` is referenced by the docs but does not exist in the repo.
-- MQTT publishes RX packets only, never TX — see [docs/mqtt-and-radio.md](./docs/mqtt-and-radio.md).
 
 ## Feature ideas not yet started
 

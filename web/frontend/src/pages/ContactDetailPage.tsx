@@ -33,6 +33,10 @@ import {
   type MonitorMetadata,
 } from "@/components/MonitoringSettings";
 import { timeAgo, truncateMid } from "@/lib/format";
+import { request, type ConfigCompanion, type FloodScope } from "@/lib/configApi";
+import { RegionSelect, resolveScope, useRegionSettings } from "@/components/RegionSelect";
+import { useApiList } from "@/hooks/useApiList";
+import { useCompanionRef } from "@/hooks/useCompanions";
 
 interface Contact {
   peerPubkey: string;
@@ -45,6 +49,7 @@ interface Contact {
   outPath: string | null; // null = unknown (flood), "" = direct
   outPathHashSize?: number;
   pathHashSize: number; // bytes per hop for everything sent to this contact
+  floodScope: FloodScope; // region for everything flooded to this contact
   lastSeen?: string;
   addedAt: string;
   metadata?: MonitorMetadata;
@@ -96,6 +101,33 @@ export function ContactDetailPage() {
       .then((c: Contact | null) => c && setContact(c))
       .catch(() => {});
   }, [apiBase]);
+
+  const { id: companionId } = useCompanionRef(companion);
+  const regionSettings = useRegionSettings();
+  const { items: configCompanions } = useApiList<ConfigCompanion>(
+    "/api/config/companions",
+    "Failed to load companions",
+  );
+  const companionScope = resolveScope(
+    configCompanions?.find((c) => c.id === companionId)?.floodScope,
+    regionSettings.scope,
+  );
+  const [savingRegion, setSavingRegion] = useState(false);
+  const saveRegion = useCallback(
+    async (floodScope: FloodScope) => {
+      setSavingRegion(true);
+      try {
+        await request(`${apiBase}/region`, "PUT", { floodScope });
+        toast.success("Region saved");
+        refreshContact();
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Failed to save the region");
+      } finally {
+        setSavingRegion(false);
+      }
+    },
+    [apiBase, refreshContact],
+  );
 
   const copyKey = useCallback(() => {
     navigator.clipboard.writeText(contactPubkey).then(() => {
@@ -286,6 +318,16 @@ export function ContactDetailPage() {
                 </span>
               </InfoRow>
             </div>
+          </section>
+          <section className="panel p-4">
+            <RegionSelect
+              value={contact.floodScope}
+              onChange={saveRegion}
+              regions={regionSettings.regions}
+              inherit={{ from: "companion", resolved: companionScope }}
+              disabled={savingRegion}
+              hint="for messages, logins and requests that flood to this contact, and the ACKs we send it"
+            />
           </section>
           <PathDialog
             open={pathOpen}

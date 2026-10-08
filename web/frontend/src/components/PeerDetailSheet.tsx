@@ -484,6 +484,7 @@ interface MembershipHit {
   companion: string;
   ref: string;
   isRepeater: boolean;
+  peerType: string;
 }
 
 // One fetch shared by the "In companions" list and the delete gate.
@@ -514,6 +515,7 @@ function usePeerMembership(
                   isRepeater:
                     contact.metadata?.isRepeater === true ||
                     (contact.type || "").toUpperCase() === "REPEATER",
+                  peerType: contact.type || (contact.metadata?.isRepeater ? "REPEATER" : ""),
                 } as MembershipHit)
               : null,
           )
@@ -547,7 +549,7 @@ function CompanionMembership({
       <span className="label-overline">In companions</span>
       <div className="mt-2 space-y-1.5">
         {hits.map((h) => {
-          const to = contactDetailPath(h.ref, pubkeyHex, h.isRepeater);
+          const to = contactDetailPath(h.ref, pubkeyHex, h.peerType);
           return (
             <button
               key={h.companion}

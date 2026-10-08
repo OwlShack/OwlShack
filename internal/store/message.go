@@ -11,7 +11,7 @@ import (
 const DefaultMaxMessages = 5000
 
 // messageColumns is the SELECT list for a full Message row; keep in sync with scanMessage and Insert.
-const messageColumns = `id, companion_id, channel, channel_hash, sender, text, direction, timestamp, received_at, snr, rssi, confirmed, path_hashes, path_hash_size, hops, status`
+const messageColumns = `id, companion_id, channel, channel_hash, sender, text, direction, timestamp, received_at, snr, rssi, confirmed, path_hashes, path_hash_size, hops, status, flood_scope`
 
 type Message struct {
 	ID          int64
@@ -31,6 +31,8 @@ type Message struct {
 	PathHashSize *int
 	Hops         *int
 	Status       *string
+	// FloodScope is what the flood carried: "everywhere", "region:<name>", "unknown" (not in the list) or "unrecorded".
+	FloodScope string
 }
 
 type MessageRepo struct {
@@ -45,7 +47,7 @@ func scanMessage(s interface{ Scan(...any) error }) (Message, error) {
 		&m.ID, &m.CompanionID, &m.Channel, &m.ChannelHash,
 		&m.Sender, &m.Text, &m.Direction, unixMS(&m.Timestamp), unixMS(&m.ReceivedAt),
 		&m.SNR, &m.RSSI, &m.RepeatCount,
-		&m.PathHashes, &m.PathHashSize, &m.Hops, &m.Status,
+		&m.PathHashes, &m.PathHashSize, &m.Hops, &m.Status, &m.FloodScope,
 	)
 	return m, err
 }
@@ -54,11 +56,14 @@ func (r *MessageRepo) Insert(ctx context.Context, m *Message) error {
 	if m.ReceivedAt.IsZero() {
 		return errors.New("inserting message: no receive time")
 	}
+	if m.FloodScope == "" {
+		return errors.New("inserting message: no flood scope") // "unrecorded" is only for rows from before scopes
+	}
 	res, err := r.db.ExecContext(ctx, `
-		INSERT INTO messages (companion_id, channel, channel_hash, sender, text, direction, timestamp, received_at, snr, rssi, confirmed, path_hashes, path_hash_size, hops, status)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		INSERT INTO messages (companion_id, channel, channel_hash, sender, text, direction, timestamp, received_at, snr, rssi, confirmed, path_hashes, path_hash_size, hops, status, flood_scope)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		m.CompanionID, m.Channel, m.ChannelHash, m.Sender, m.Text, m.Direction, m.Timestamp.UnixMilli(), m.ReceivedAt.UnixMilli(), m.SNR, m.RSSI, m.RepeatCount,
-		m.PathHashes, m.PathHashSize, m.Hops, m.Status,
+		m.PathHashes, m.PathHashSize, m.Hops, m.Status, m.FloodScope,
 	)
 	if err != nil {
 		return fmt.Errorf("inserting message: %w", err)

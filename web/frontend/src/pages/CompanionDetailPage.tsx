@@ -105,6 +105,10 @@ import {
 import { formatClockTime, formatDateTime, formatShortTime, timeAgo, truncateMid } from "@/lib/format";
 import { mapPathHref } from "@/lib/linkPath";
 import { contactDetailPath } from "@/lib/routes";
+import { regionName, useSendRegion } from "@/components/RegionSelect";
+import { ChannelKindIcon, channelKind, channelKindLabel, type ChannelKind } from "@/components/ChannelKind";
+import { useApiList } from "@/hooks/useApiList";
+import type { ConfigChannel } from "@/lib/configApi";
 import { cn } from "@/lib/utils";
 
 interface Conversation {
@@ -141,6 +145,8 @@ interface Message {
   hops?: number | null;
   pathHashSize?: number | null;
   status?: string | null;
+  // "everywhere", "region:<name>", "unknown" (a region not in Settings) or "unrecorded".
+  floodScope?: string;
 }
 
 // `targets` maps a channel's hash-stripped, lowercased name to its real configured name.
@@ -449,6 +455,15 @@ function CompanionChat() {
   const [loadingMsgs, setLoadingMsgs] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
+  const lastMsg = messages.at(-1);
+  const [regionVersion, setRegionVersion] = useState(0);
+  const sendScope = useSendRegion(companionId, companionRef, activeChannel, `${messages.length}:${lastMsg?.status}`, regionVersion);
+  const { items: channelRows, reload: reloadChannelRows } = useApiList<ConfigChannel>(
+    companionId != null ? `/api/config/companions/${companionId}/channels` : null,
+    "Failed to load channels",
+  );
+  const kindOf = (name: string) => channelKind(name, channelRows?.find((r) => r.name === name)?.privateKeySet);
+  const sendRegion = regionName(sendScope.scope);
   const [search, setSearch] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -687,6 +702,7 @@ function CompanionChat() {
       }
       toast.success(`Channel "${channelName}" added`);
       setAddChannelOpen(false);
+      reloadChannelRows();
       // The firmware normalizes a public channel name ("ham" → "#ham"), so open what actually landed.
       const updated = await loadConversations();
       const target = updated.find(
@@ -696,7 +712,7 @@ function CompanionChat() {
       );
       setSearchParams({ channel: target ? target.channel : channelName });
     },
-    [companionRef, loadConversations, setSearchParams],
+    [companionRef, loadConversations, setSearchParams, reloadChannelRows],
   );
 
   // The roster already includes every configured channel, seeded server-side.
@@ -1184,7 +1200,7 @@ function CompanionChat() {
   const openConversation = useCallback(
     (c: Conversation) => {
       if (c.isRepeater && c.pubkey) {
-        navigate(contactDetailPath(companionRef, c.pubkey, true));
+        navigate(contactDetailPath(companionRef, c.pubkey, c.peerType ?? "REPEATER"));
         return;
       }
       setSearchParams({ channel: c.channel });
@@ -1582,6 +1598,7 @@ function CompanionChat() {
                 <ConversationRow
                   key={c.id}
                   convo={c}
+                  kind={c.type === "channel" ? kindOf(c.channel) : undefined}
                   active={c.channel === activeChannel}
                   onClick={() => openConversation(c)}
                 />
@@ -1617,14 +1634,25 @@ function CompanionChat() {
                       <PeerTypePill type={activeConversation.peerType} />
                     )}
                   </div>
-                  <div className="text-mono-xs text-muted-foreground">
+                  <div className="text-mono-xs text-muted-foreground flex flex-wrap items-center gap-x-1">
                     {activeConversation.type === "channel"
-                      ? "channel"
+                      ? (
+                          <span className="inline-flex items-center gap-1">
+                            <ChannelKindIcon kind={kindOf(activeConversation.channel)} />
+                            {channelKindLabel(kindOf(activeConversation.channel))}
+                          </span>
+                        )
                       : isRoom
                         ? roomLoggedIn
                           ? `room server · ${roomSession?.role ?? "joined"}`
                           : "room server · not joined"
                         : "direct message"}
+                    {sendRegion && !sendScope.direct && (
+                      <span className="inline-flex items-center gap-0.5" title={`Sends are scoped to region ${sendRegion}`}>
+                        · <MapPin className="size-3" />
+                        {sendRegion}
+                      </span>
+                    )}
                     {activeConversation.lastActive && (
                       <>
                         {" "}
@@ -1635,7 +1663,10 @@ function CompanionChat() {
                 </div>
                 <ChatHeaderMenu
                   companion={companionRef}
+                  companionId={companionId}
                   conversation={activeConversation}
+                  sendScope={sendScope.scope}
+                  onRegionChanged={() => setRegionVersion((v) => v + 1)}
                   onSearchToggle={() => {
                     setMsgSearchOpen((v) => !v);
                     if (msgSearchOpen) setMsgSearch("");
@@ -1762,7 +1793,9 @@ function CompanionChat() {
                         emojiAC.close();
                         mentionAC.close();
                       }}
-                      placeholder={composerLocked ? lockedHint : "transmit…"}
+                      placeholder={
+                        composerLocked ? lockedHint : sendScope.direct ? "transmit direct…" : sendRegion ? `transmit in ${sendRegion}…` : "transmit…"
+                      }
                       disabled={composerLocked}
                       className="resize-none rounded-none border-border font-mono text-base md:text-sm leading-6 min-h-9 max-h-25 pr-11 bg-background"
                     />
@@ -1799,7 +1832,18 @@ function CompanionChat() {
                           ? "read-only access — posting disabled"
                           : "Enter sends · Shift+Enter newline"}
                     </span>
-                    {charCounter}
+                    <span className="flex items-center gap-3">
+                      {sendRegion && !sendScope.direct && (
+                        <span
+                          className="inline-flex items-center gap-0.5 font-mono text-[10px] text-muted-foreground/60"
+                          title={`Sends are scoped to region ${sendRegion}`}
+                        >
+                          <MapPin className="size-2.5" />
+                          {sendRegion}
+                        </span>
+                      )}
+                      {charCounter}
+                    </span>
                   </div>
                 )}
                 {isMobile && emojiOpen && (
@@ -1879,6 +1923,7 @@ function CompanionChat() {
         existing={configuredChannels}
         onAdd={addChannel}
         prefillName={addChannelPrefill}
+        region={regionName(sendScope.companionScope)}
       />
 
       <Dialog open={!!modal} onOpenChange={(o) => !o && closeModal()}>
@@ -2047,10 +2092,12 @@ function groupMessages(messages: Message[]): MessageGroupShape[] {
 
 function ConversationRow({
   convo,
+  kind,
   active,
   onClick,
 }: {
   convo: Conversation;
+  kind?: ChannelKind;
   active: boolean;
   onClick: () => void;
 }) {
@@ -2111,9 +2158,10 @@ function ConversationRow({
               repeater
             </span>
           )}
-          {convo.type === "channel" && (
-            <span className="font-mono text-[9px] uppercase tracking-widest text-muted-foreground/60">
-              # channel
+          {kind && (
+            <span className="inline-flex items-center gap-1 font-mono text-[9px] uppercase tracking-widest text-muted-foreground/60">
+              <ChannelKindIcon kind={kind} />
+              {channelKindLabel(kind).replace(" channel", "")}
             </span>
           )}
         </div>
@@ -2342,6 +2390,7 @@ function MessageBubble({
   onAddContact: (prefill: ContactPrefill) => void;
   channelCtx: ChannelLinkCtx;
 }) {
+  const region = msg.floodScope === "unknown" ? "unknown" : regionName(msg.floodScope);
   const longPressTimer = useRef<number | null>(null);
   const longPressTriggered = useRef(false);
   const [tapped, setTapped] = useState(false);
@@ -2400,6 +2449,7 @@ function MessageBubble({
         />
         {(msg.snr != null ||
           (msg.repeatCount != null && msg.repeatCount > 0) ||
+          region != null ||
           (isTx && msg.status)) && (
           <div
             className={cn(
@@ -2418,6 +2468,15 @@ function MessageBubble({
               >
                 {msg.hops} hop{msg.hops > 1 ? "s" : ""}
                 {msg.pathHashSize != null && ` · ${msg.pathHashSize}B`}
+              </span>
+            )}
+            {region != null && (
+              <span
+                className="text-muted-foreground inline-flex items-center gap-0.5"
+                title={region === "unknown" ? "Scoped to a region that is not in Settings" : `Region ${region}`}
+              >
+                <MapPin className="size-2.5" />
+                {region === "unknown" ? "other region" : region}
               </span>
             )}
             {msg.repeatCount != null && msg.repeatCount > 0 && (

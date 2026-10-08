@@ -135,6 +135,8 @@ func assembleFromRows(rows *configRows) *config.Config {
 		DutyCycle:           s.DutyCyclePct,
 		PacketRetentionDays: &s.PacketRetentionDays,
 		SetupComplete:       boolPtr(s.SetupComplete),
+		FloodRegions:        floodRegionsToConfig(s.FloodRegions),
+		FloodScope:          config.FloodScope(s.FloodScope),
 	}
 
 	chansByComp := make(map[int64][]store.CompanionChannel)
@@ -165,11 +167,12 @@ func assembleFromRows(rows *configRows) *config.Config {
 			TelemetryBase:        emptyToNil(c.TelemBase),
 			TelemetryLocation:    emptyToNil(c.TelemLoc),
 			TelemetryEnvironment: emptyToNil(c.TelemEnv),
+			FloodScope:           config.FloodScope(c.FloodScope),
 		}
 		if chs := chansByComp[c.ID]; len(chs) > 0 {
 			list := make(config.ChannelList, 0, len(chs))
 			for _, ch := range chs {
-				list = append(list, config.ChannelRef{Name: ch.Name, PrivateKey: ch.PrivateKey})
+				list = append(list, config.ChannelRef{Name: ch.Name, PrivateKey: ch.PrivateKey, FloodScope: config.FloodScope(ch.FloodScope)})
 			}
 			comp.Channels = &list
 		}
@@ -191,12 +194,13 @@ func assembleFromRows(rows *configRows) *config.Config {
 					FailoverTimeout:    t.FailoverTimeout,
 					Location:           locationFromStore(t.Location),
 					Regions:            t.Regions,
+					FloodScope:         config.FloodScope(t.FloodScope),
 				}
 				if len(t.ChannelIDs) > 0 {
 					cl := make(config.ChannelList, 0, len(t.ChannelIDs))
 					for _, cid := range t.ChannelIDs {
 						if ch, ok := chanByID[cid]; ok {
-							cl = append(cl, config.ChannelRef{Name: ch.Name, PrivateKey: ch.PrivateKey})
+							cl = append(cl, config.ChannelRef{Name: ch.Name, PrivateKey: ch.PrivateKey, FloodScope: config.FloodScope(ch.FloodScope)})
 						}
 					}
 					tc.Channels = &cl
@@ -226,14 +230,14 @@ func assembleFromRows(rows *configRows) *config.Config {
 			DirectTxDelayFactor: r.DirectTxDelayFactor,
 			RxDelayBase:         r.RxDelayBase,
 			MultiAcks:           r.MultiAcks,
-			DefaultRegion:       r.DefaultRegion,
+			FloodScope:          config.FloodScope(r.FloodScope),
 			HomeRegion:          r.HomeRegion,
 			AdminPassword:       r.AdminPassword,
 			GuestPassword:       r.GuestPassword,
 			OwnerInfo:           r.OwnerInfo,
 		}
 		for _, rg := range r.Regions {
-			cfg.Repeater.Regions = append(cfg.Repeater.Regions, config.RepeaterRegion{Name: rg.Name, DenyFlood: rg.DenyFlood})
+			cfg.Repeater.Regions = append(cfg.Repeater.Regions, config.RepeaterRegion{Name: rg.Name, Parent: rg.Parent, DenyFlood: rg.DenyFlood})
 		}
 	}
 
@@ -324,6 +328,8 @@ func writeConfigToTables(ctx context.Context, st *store.Store, cfg *config.Confi
 		DutyCyclePct:        cfg.DutyCycle,
 		PacketRetentionDays: cfg.PacketRetentionDaysOr(),
 		SetupComplete:       cfg.SetupComplete != nil && *cfg.SetupComplete,
+		FloodRegions:        floodRegionsToStore(cfg.FloodRegions),
+		FloodScope:          string(cfg.FloodScope),
 	}); err != nil {
 		return err
 	}
@@ -355,6 +361,8 @@ func writeConfigToTables(ctx context.Context, st *store.Store, cfg *config.Confi
 			TelemBase: config.TelemetryModeOrDefault(cc.TelemetryBase),
 			TelemLoc:  config.TelemetryModeOrDefault(cc.TelemetryLocation),
 			TelemEnv:  config.TelemetryModeOrDefault(cc.TelemetryEnvironment),
+
+			FloodScope: string(cc.FloodScope),
 		}
 		if prev, ok := byName[cc.Name]; ok {
 			row.ID = prev.ID
@@ -395,7 +403,7 @@ func writeRepeater(ctx context.Context, st *store.Store, cfg *config.Config) err
 	pub, _ := config.PubKeyHexFromSeed(r.PrivateKey)
 	var regions []store.RepeaterRegion
 	for _, rg := range r.Regions {
-		regions = append(regions, store.RepeaterRegion{Name: rg.Name, DenyFlood: rg.DenyFlood})
+		regions = append(regions, store.RepeaterRegion{Name: rg.Name, Parent: rg.Parent, DenyFlood: rg.DenyFlood})
 	}
 	return st.Repeater.Set(ctx, &store.Repeater{
 		Name:                r.Name,
@@ -415,7 +423,7 @@ func writeRepeater(ctx context.Context, st *store.Store, cfg *config.Config) err
 		DirectTxDelayFactor: r.DirectTxDelayFactor,
 		RxDelayBase:         r.RxDelayBase,
 		MultiAcks:           r.MultiAcks,
-		DefaultRegion:       r.DefaultRegion,
+		FloodScope:          string(r.FloodScope),
 		HomeRegion:          r.HomeRegion,
 		AdminPassword:       r.AdminPassword,
 		GuestPassword:       r.GuestPassword,
@@ -439,7 +447,7 @@ func replaceCompanionChildren(ctx context.Context, st *store.Store, companionID 
 	chanID := make(map[string]int64)
 	if cc.Channels != nil {
 		for _, ch := range *cc.Channels {
-			cr := store.CompanionChannel{CompanionID: companionID, Name: ch.Name, PrivateKey: ch.PrivateKey}
+			cr := store.CompanionChannel{CompanionID: companionID, Name: ch.Name, PrivateKey: ch.PrivateKey, FloodScope: string(ch.FloodScope)}
 			if err := st.Channels.Create(ctx, &cr); err != nil {
 				return err
 			}
@@ -466,7 +474,7 @@ func replaceCompanionChildren(ctx context.Context, st *store.Store, companionID 
 				id, ok := chanID[ref.Name]
 				if !ok {
 					// A trigger channel outside the companion's list shouldn't happen; create it so a private key is never dropped.
-					cr := store.CompanionChannel{CompanionID: companionID, Name: ref.Name, PrivateKey: ref.PrivateKey}
+					cr := store.CompanionChannel{CompanionID: companionID, Name: ref.Name, PrivateKey: ref.PrivateKey, FloodScope: string(ref.FloodScope)}
 					if err := st.Channels.Create(ctx, &cr); err != nil {
 						return err
 					}
@@ -493,6 +501,7 @@ func replaceCompanionChildren(ctx context.Context, st *store.Store, companionID 
 			Location:           locationToStore(tg.Location),
 			Regions:            tg.Regions,
 			ChannelIDs:         chIDs,
+			FloodScope:         string(tg.FloodScope),
 		}
 		if err := st.Triggers.Create(ctx, &tr); err != nil {
 			return err
@@ -608,4 +617,20 @@ func ptrToSlice(p *[]string) []string {
 		return nil
 	}
 	return *p
+}
+
+func floodRegionsToConfig(in []store.FloodRegion) []config.FloodRegion {
+	out := make([]config.FloodRegion, len(in))
+	for i, rg := range in {
+		out[i] = config.FloodRegion{Name: rg.Name, Parent: rg.Parent}
+	}
+	return out
+}
+
+func floodRegionsToStore(in []config.FloodRegion) []store.FloodRegion {
+	out := make([]store.FloodRegion, len(in))
+	for i, rg := range in {
+		out[i] = store.FloodRegion{Name: rg.Name, Parent: rg.Parent}
+	}
+	return out
 }

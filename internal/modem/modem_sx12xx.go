@@ -7,8 +7,8 @@ import (
 	"sync"
 
 	"github.com/OwlShack/OwlShack/internal/config"
-	"github.com/meshcore-go/meshcore-go/hardware"
-	"github.com/meshcore-go/meshcore-go/hardware/sx12xx"
+	"github.com/OwlShack/meshcore-go/hardware"
+	"github.com/OwlShack/meshcore-go/hardware/sx12xx"
 	"periph.io/x/conn/v3/gpio/gpioreg"
 	"periph.io/x/conn/v3/spi/spireg"
 	"periph.io/x/host/v3"
@@ -124,7 +124,7 @@ func setupSPI(ms *State, cfg *config.Config, connAddr string, radioConfig *hardw
 	slog.Info("radio up", "component", "modem", "board", board.Name, "chip", board.Chip,
 		"leds", board.HasLEDs(),
 		"spi", portName, "freq", *cfg.Freq, "bw", *cfg.Bw, "sf", *cfg.SF, "cr", *cfg.CR,
-		"tx", txPower, "preamble_symbols", sx12xx.PreambleForSF(radioConfig.SF),
+		"tx", txPower, "preamble_symbols", hardware.PreambleForSF(radioConfig.SF),
 		"activity_window", pre+payload)
 
 	ms.Stats = stats

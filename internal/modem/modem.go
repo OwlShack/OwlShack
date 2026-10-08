@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/OwlShack/OwlShack/internal/config"
-	"github.com/meshcore-go/meshcore-go/hardware"
-	kissTransport "github.com/meshcore-go/meshcore-go/hardware/transport"
-	"github.com/meshcore-go/meshcore-go/node"
+	"github.com/OwlShack/meshcore-go/hardware"
+	kissTransport "github.com/OwlShack/meshcore-go/hardware/transport"
+	"github.com/OwlShack/meshcore-go/node"
 )
 
 // handlerWatchdog is deliberately not configurable: DATA dispatch is sub-millisecond, so an operator's value could only mask a stall.
@@ -66,7 +66,7 @@ func (m *State) StartDeadWatcher(reconnectCh chan<- struct{}) {
 	m.watcherDone = make(chan struct{})
 	done := m.watcherDone
 
-	if d, ok := m.Modem.(interface{ Dead() <-chan struct{} }); ok {
+	if d, ok := m.Modem.(node.DeadNotifier); ok {
 		dead := d.Dead()
 		go func() {
 			select {
@@ -224,13 +224,14 @@ func setupKiss(ctx context.Context, ms *State, cfg *config.Config, connScheme, c
 	}
 	ms.closers = append(ms.closers, kissModem)
 
-	if err := kissModem.SetRadio(radioConfig); err != nil {
+	// The firmware answers both with HW_RESP_OK whatever the values, so waiting proves the modem took them, not that they were valid.
+	if err := kissModem.SetRadioWait(connectCtx, radioConfig); err != nil {
 		ms.Close()
 		return fmt.Errorf("SET_RADIO: %w", err)
 	}
 	slog.Info("SET_RADIO", "freq", *cfg.Freq, "bw", *cfg.Bw, "sf", *cfg.SF, "cr", *cfg.CR)
 
-	if err := kissModem.SetTxPower(*cfg.TX); err != nil {
+	if err := kissModem.SetTxPowerWait(connectCtx, *cfg.TX); err != nil {
 		ms.Close()
 		return fmt.Errorf("SET_TX_POWER: %w", err)
 	}

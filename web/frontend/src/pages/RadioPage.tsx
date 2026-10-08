@@ -12,7 +12,8 @@ import { HeaderButton } from "@/components/HeaderButton";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useApiObject } from "@/hooks/useApiObject";
 import { setTiles, type MapDarkStyle, type MapProvider } from "@/lib/leaflet";
-import { configApi, type Settings, type SpiBoard } from "@/lib/configApi";
+import { configApi, type FloodRegion, type FloodScope, type Settings, type SpiBoard } from "@/lib/configApi";
+import { FloodRegionsSection } from "@/components/FloodRegionsSection";
 
 const BANDWIDTHS = [7.8, 10.4, 15.6, 20.8, 31.25, 41.7, 62.5, 125, 250, 500];
 const LOG_LEVELS = ["trace", "debug", "info", "warn", "error"];
@@ -53,6 +54,8 @@ export function RadioPage() {
   const [dutyCycle, setDutyCycle] = useState("");
   const [logLevel, setLogLevel] = useState("info");
   const [packetDays, setPacketDays] = useState("");
+  const [floodRegions, setFloodRegions] = useState<FloodRegion[]>([]);
+  const [floodScope, setFloodScope] = useState<FloodScope>("everywhere");
 
   useEffect(() => {
     if (!settings) return;
@@ -73,6 +76,8 @@ export function RadioPage() {
     setDutyCycle(settings.dutyCycle != null ? String(settings.dutyCycle) : "");
     setLogLevel(settings.logLevel ?? "info");
     setPacketDays(String(settings.packetRetentionDays));
+    setFloodRegions(settings.floodRegions);
+    setFloodScope(settings.floodScope);
   }, [settings]);
 
   // Fetched once on mount: the list is compiled into the binary, so it cannot
@@ -90,6 +95,10 @@ export function RadioPage() {
     if (!settings) return;
     setSaving(true);
     try {
+      // Regions first: they are the part the server is likelier to refuse, and a refusal then saves nothing.
+      await configApi.putFloodRegions(floodRegions, floodScope).catch((e) => {
+        throw new Error(`Regions not saved: ${e instanceof Error ? e.message : e}`);
+      });
       await configApi.putSettings({
         // Round-trip the connection type so a radio save never resets it.
         connectionType,
@@ -115,7 +124,7 @@ export function RadioPage() {
         packetRetentionDays: Number(packetDays),
         // setupComplete omitted on purpose: the server keeps the stored value.
       });
-      toast.success("Radio settings saved");
+      toast.success("Settings saved");
       setTiles(mapProvider, mapTileKey.trim(), mapDarkStyle);
       reload();
     } catch (e) {
@@ -250,6 +259,13 @@ export function RadioPage() {
               </div>
             </div>
           </section>
+
+          <FloodRegionsSection
+            regions={floodRegions}
+            onRegionsChange={setFloodRegions}
+            scope={floodScope}
+            onScopeChange={setFloodScope}
+          />
 
           <section className="panel">
             <SectionTitle eyebrow="process" title="Service" />

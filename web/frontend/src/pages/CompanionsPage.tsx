@@ -21,7 +21,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useApiList } from "@/hooks/useApiList";
-import { configApi, type ConfigCompanion } from "@/lib/configApi";
+import { configApi, type ConfigCompanion, type FloodScope } from "@/lib/configApi";
+import { RegionSelect, useRegionSettings } from "@/components/RegionSelect";
 import { LoadErrorAlert } from "@/components/LoadErrorAlert";
 import { PageHeader } from "@/components/PageHeader";
 import { InlineConfirm } from "@/components/InlineConfirm";
@@ -262,6 +263,8 @@ function CompanionEditor({
   const [pathHashSize, setPathHashSize] = useState(
     companion?.pathHashSize != null ? String(companion.pathHashSize) : "",
   );
+  const [floodScope, setFloodScope] = useState<FloodScope>(companion?.floodScope ?? "inherit");
+  const regionSettings = useRegionSettings();
   const [advertInterval, setAdvertInterval] = useState(
     companion?.advertInterval != null ? String(companion.advertInterval) : "",
   );
@@ -290,6 +293,7 @@ function CompanionEditor({
           pathHashSize: pathHashSize === "" ? null : parseInt(pathHashSize, 10),
           dmPolicy,
           dmAllow: dmAllow.map((k) => k.trim()).filter(Boolean),
+          floodScope,
         },
         companion?.id,
       );
@@ -386,6 +390,13 @@ function CompanionEditor({
               hint="width of each hop hash in our flood packets"
             />
           </div>
+          <RegionSelect
+            value={floodScope}
+            onChange={setFloodScope}
+            regions={regionSettings.regions}
+            inherit={{ from: "Settings", resolved: regionSettings.scope }}
+            hint="for this companion's adverts, and its channels and contacts unless they pick their own"
+          />
 
           <SelectField
             label="Who can DM this companion"

@@ -4,9 +4,8 @@ import (
 	"context"
 	"time"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
+	meshcore "github.com/OwlShack/meshcore-go"
 
-	"github.com/OwlShack/OwlShack/internal/config"
 	"github.com/OwlShack/OwlShack/internal/node/advert"
 )
 
@@ -67,11 +66,21 @@ func (r *Repeater) sendAdvert(flood bool) error {
 	return err
 }
 
-// defaultRegionScope resolves the configured scope; nil means an unscoped flood, including when the name is dangling.
+// defaultRegionScope is the region for our own floods; it need not be one we relay, so it is not the library's map default.
 func (r *Repeater) defaultRegionScope() *meshcore.Region {
-	name := r.cfgSnapshot().DefaultRegion
-	if name == "" || name == config.WildcardRegion {
-		return nil
+	return r.cfgSnapshot().FloodScope.MeshRegion()
+}
+
+// replyScope is the firmware's chooseReplyScope with our own region as the fallback: the request's region, none for an allowed unscoped flood.
+func (r *Repeater) replyScope(req *meshcore.Packet) *meshcore.Region {
+	rm := r.node.Regions()
+	if req.IsRouteFlood() {
+		if m := rm.FindFloodMatch(req); m != nil {
+			if rm.IsWildcard(m) {
+				return nil
+			}
+			return m
+		}
 	}
-	return r.node.Regions().Get(name)
+	return r.defaultRegionScope()
 }

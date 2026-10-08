@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
-	"github.com/meshcore-go/meshcore-go/node"
+	meshcore "github.com/OwlShack/meshcore-go"
+	"github.com/OwlShack/meshcore-go/node"
 
 	"github.com/OwlShack/OwlShack/internal/store"
 )
@@ -34,7 +34,7 @@ func TestExpandedKey_RequestsDecryptAtTheRepeater(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if self.Seed() != [32]byte{} {
+	if _, ok := self.Seed(); ok {
 		t.Fatal("precondition: an expanded-key identity should have no seed")
 	}
 	repeater := meshcore.NewLocalIdentityFromSeed([32]byte{0x8d})
@@ -48,7 +48,7 @@ func TestExpandedKey_RequestsDecryptAtTheRepeater(t *testing.T) {
 	n := node.New(self, radio)
 	t.Cleanup(n.Stop)
 	n.Peers().Insert(&node.Peer{Identity: repeater.Identity, Name: "OldWestRPT0"})
-	rm := NewClient(n, st, 0, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, func() uint8 { return 1 })
+	rm := NewClient(n, st, 0, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, func() uint8 { return 1 }, func([]byte) *meshcore.Region { return nil })
 	pk := hex.EncodeToString(repeater.PublicKeyBytes())
 
 	secret, err := repeater.SharedSecret(self.Identity)

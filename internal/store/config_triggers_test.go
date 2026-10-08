@@ -34,6 +34,7 @@ func TestTriggerRepo_RoundTrip(t *testing.T) {
 		URL:                "https://example.com/cap.atom",
 		Location:           &TriggerLocation{Lat: -35.725, Lon: 174.323, RadiusKm: 25},
 		ChannelIDs:         []int64{ch.ID},
+		FloodScope:         "region:nz",
 	}
 	if err := st.Triggers.Create(t.Context(), want); err != nil {
 		t.Fatalf("Triggers.Create: %v", err)

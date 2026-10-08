@@ -6,7 +6,7 @@ import (
 	"sort"
 	"time"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
+	meshcore "github.com/OwlShack/meshcore-go"
 
 	"github.com/OwlShack/OwlShack/internal/buildinfo"
 	"github.com/OwlShack/OwlShack/internal/sensor"
@@ -15,14 +15,7 @@ import (
 
 // Admin request types (firmware REQ_TYPE_*), mirroring internal/client/repeater.
 const (
-	reqTypeGetStatus        = 0x01
-	reqTypeGetTelemetryData = 0x03
-	reqTypeGetAccessList    = 0x05
-	reqTypeGetNeighbours    = 0x06
-	reqTypeGetOwnerInfo     = 0x07
-
 	telemChannelSelf = sensor.ChannelSelf
-	maxPacketPayload = 184 // firmware MAX_PACKET_PAYLOAD (sizeof reply_data)
 	// Matches the firmware's results_buffer so a neighbours reply still fits one packet.
 	neighboursMaxBody = 130
 )
@@ -76,16 +69,16 @@ func (r *Repeater) handleReq(pkt *meshcore.Packet) {
 // buildReqResponse builds everything after the reflected tag; false answers nothing, and only telemetry can exceed maxBody.
 func (r *Repeater) buildReqResponse(client *store.RepeaterACLEntry, reqType byte, params []byte, maxBody int) ([]byte, bool) {
 	switch reqType {
-	case reqTypeGetStatus:
+	case meshcore.ReqTypeGetStatus:
 		return r.statusBody(), true
-	case reqTypeGetNeighbours:
+	case meshcore.ReqTypeGetNeighbours:
 		if len(params) >= 1 && params[0] != 0 {
 			return nil, false // unknown request version
 		}
 		return r.neighboursBody(params), true
-	case reqTypeGetOwnerInfo:
+	case meshcore.ReqTypeGetOwnerInfo:
 		return r.ownerInfoBody(), true
-	case reqTypeGetAccessList:
+	case meshcore.ReqTypeGetAccessList:
 		if client.Permissions&permRoleMask != permAdmin {
 			return nil, false // admin-only
 		}
@@ -93,7 +86,7 @@ func (r *Repeater) buildReqResponse(client *store.RepeaterACLEntry, reqType byte
 			return nil, false // reserved query params
 		}
 		return r.accessListBody(), true
-	case reqTypeGetTelemetryData:
+	case meshcore.ReqTypeGetTelemetryData:
 		// payload[0] is an INVERSE mask; handleRequest sends base whatever it says, and a guest nothing more.
 		perms := sensor.PermAll
 		if len(params) >= 1 {
@@ -144,8 +137,14 @@ func (r *Repeater) statusBody() []byte {
 
 	b := make([]byte, 56)
 	if r.haveDeviceStats.Load() { // real modem readings (poll cache)
-		binary.LittleEndian.PutUint16(b[0:2], uint16(r.batteryMV.Load()))         // batt_milli_volts
-		binary.LittleEndian.PutUint16(b[4:6], uint16(int16(r.noiseFloor.Load()))) // noise_floor (radio getNoiseFloor)
+		if r.haveBattery.Load() {
+			binary.LittleEndian.PutUint16(b[0:2], uint16(r.batteryMV.Load())) // batt_milli_volts
+		}
+		nf := r.noiseFloor.Load()
+		if nf == noNoiseFloor {
+			nf = 0 // the firmware reports 0 until it has sampled
+		}
+		binary.LittleEndian.PutUint16(b[4:6], uint16(int16(nf))) // noise_floor (radio getNoiseFloor)
 	}
 	if r.node != nil {
 		binary.LittleEndian.PutUint16(b[2:4], uint16(r.node.TxQueueLen())) // curr_tx_queue_len
@@ -207,7 +206,7 @@ func (r *Repeater) neighboursBody(params []byte) []byte {
 		var secs [4]byte
 		binary.LittleEndian.PutUint32(secs[:], uint32(now.Sub(n.heard).Seconds()))
 		body = append(body, secs[:]...)
-		body = append(body, byte(int8(n.snr*4))) // firmware (int8_t)(snr*4): quarter-dB, truncated
+		body = append(body, byte(meshcore.SNRToWire(float32(n.snr))))
 	}
 	return body
 }
@@ -238,7 +237,7 @@ func (r *Repeater) accessListBody() []byte {
 
 	body := make([]byte, 0, len(keys)*7)
 	for _, k := range keys {
-		if perms[k] == 0 || len(body)+4+7 > maxPacketPayload-4 {
+		if perms[k] == 0 || len(body)+4+7 > meshcore.MaxPacketPayload-4 {
 			continue // guest / deleted, or no room left
 		}
 		pub, err := hex.DecodeString(k)

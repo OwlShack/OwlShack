@@ -282,7 +282,7 @@ export function MonitoringDetailPage() {
                 {polling ? "polling" : "poll"}
               </HeaderButton>
               {node?.companionId && node.kind !== "link" && (
-                <HeaderButton icon={ExternalLink} to={contactDetailPath(node.companionId, pubkey, node.kind === "repeater")}>
+                <HeaderButton icon={ExternalLink} to={contactDetailPath(node.companionId, pubkey, node.kind)}>
                   {node.kind === "repeater" ? "repeater" : "contact"}
                 </HeaderButton>
               )}
@@ -304,7 +304,7 @@ export function MonitoringDetailPage() {
                 </DropdownMenuItem>
                 {node?.companionId && node.kind !== "link" && (
                   <DropdownMenuItem asChild className="font-mono text-xs uppercase tracking-[0.08em]">
-                    <Link to={contactDetailPath(node.companionId, pubkey, node.kind === "repeater")}>
+                    <Link to={contactDetailPath(node.companionId, pubkey, node.kind)}>
                       <ExternalLink className="size-3.5" /> {node.kind === "repeater" ? "repeater" : "contact"}
                     </Link>
                   </DropdownMenuItem>

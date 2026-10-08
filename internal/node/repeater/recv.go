@@ -5,7 +5,7 @@ import (
 	"encoding/hex"
 	"time"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
+	meshcore "github.com/OwlShack/meshcore-go"
 
 	"github.com/OwlShack/OwlShack/internal/meshpath"
 	"github.com/OwlShack/OwlShack/internal/store"
@@ -65,6 +65,9 @@ func (r *Repeater) handleAdvert(pkt *meshcore.Packet) {
 		}
 	}
 
+	if appData.Name == "" { // invalid or nameless app data: a neighbour at most, never a peer (firmware onAdvertRecv)
+		return
+	}
 	p := &store.Peer{
 		PubKey:          adv.PublicKey.PublicKeyBytes(),
 		Name:            appData.Name,

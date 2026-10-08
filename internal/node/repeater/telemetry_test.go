@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
-	"github.com/meshcore-go/meshcore-go/node"
+	meshcore "github.com/OwlShack/meshcore-go"
+	"github.com/OwlShack/meshcore-go/node"
 
 	"github.com/OwlShack/OwlShack/internal/sensor"
 	"github.com/OwlShack/OwlShack/internal/store"
@@ -44,7 +44,7 @@ func telemetryRepeater(t *testing.T, hook func() ([]sensor.ChannelEntry, []senso
 // params[0] is an inverse mask, so 0x00 asks for everything.
 func telemetryReply(t *testing.T, r *Repeater, role int, mask byte) string {
 	t.Helper()
-	body, ok := r.buildReqResponse(&store.RepeaterACLEntry{Permissions: role}, reqTypeGetTelemetryData, []byte{mask}, sensor.MaxReplyBody(nil))
+	body, ok := r.buildReqResponse(&store.RepeaterACLEntry{Permissions: role}, meshcore.ReqTypeGetTelemetryData, []byte{mask}, sensor.MaxReplyBody(nil))
 	if !ok {
 		t.Fatal("the node refused to answer a telemetry request")
 	}
@@ -126,9 +126,9 @@ func TestTelemetry_FallsBackToTheNodesOwnChannelWhenTheMapIsTooBig(t *testing.T)
 	r := telemetryRepeater(t, manyRows(2, 30, meshcore.LPPGenericSensor, 123456))
 
 	overSize := 29 * 6
-	if overSize <= sensor.MaxReplyBody(nil) || overSize > maxPacketPayload {
+	if overSize <= sensor.MaxReplyBody(nil) || overSize > meshcore.MaxPacketPayload {
 		t.Fatalf("a %d-byte map is not in the window this test exists for (%d..%d]",
-			overSize, sensor.MaxReplyBody(nil), maxPacketPayload)
+			overSize, sensor.MaxReplyBody(nil), meshcore.MaxPacketPayload)
 	}
 
 	got := telemetryReply(t, r, permReadOnly, 0x00)
@@ -201,7 +201,7 @@ func telemetryRequest(t *testing.T, from meshcore.LocalIdentity, to meshcore.Ide
 	}
 	plain := make([]byte, 6)
 	binary.LittleEndian.PutUint32(plain, tag)
-	plain[4] = reqTypeGetTelemetryData
+	plain[4] = meshcore.ReqTypeGetTelemetryData
 	payload, err := encPacket(secret, func(mac [2]byte, enc []byte) ([]byte, error) {
 		return (&meshcore.Request{Destination: to.PublicKey()[0], Source: from.PublicKey()[0], MAC: mac, EncryptedPayload: enc}).ToBytes()
 	}, plain)

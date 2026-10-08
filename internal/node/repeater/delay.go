@@ -5,9 +5,9 @@ import (
 	"math/rand/v2"
 	"time"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
-	"github.com/meshcore-go/meshcore-go/hardware"
-	"github.com/meshcore-go/meshcore-go/node"
+	meshcore "github.com/OwlShack/meshcore-go"
+	"github.com/OwlShack/meshcore-go/hardware"
+	"github.com/OwlShack/meshcore-go/node"
 )
 
 // Ports MyMesh::getRetransmitDelay / getDirectRetransmitDelay: rand[0, 5t] with t = airtime × factor.

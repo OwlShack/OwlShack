@@ -12,7 +12,7 @@ Plug a MeshCore radio into any Linux, macOS or Windows machine (a Raspberry Pi
 is plenty), open `http://localhost:8080`, and you get a live console for the
 mesh: chat, packet capture, mapping, remote repeater administration, and
 telemetry, all persisted to SQLite. Built on the pure Go
-[meshcore-go](https://github.com/meshcore-go/meshcore-go) library.
+[meshcore-go](https://github.com/OwlShack/meshcore-go) library.
 
 ![Overview](docs/screenshots/overview.png)
 

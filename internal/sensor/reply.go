@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"slices"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
+	meshcore "github.com/OwlShack/meshcore-go"
 )
 
 // selfTypes are what channel 1 carries: the node's battery and board temperature.

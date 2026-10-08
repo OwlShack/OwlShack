@@ -15,7 +15,7 @@ import (
 	"time"
 	"unicode"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
+	meshcore "github.com/OwlShack/meshcore-go"
 
 	"github.com/OwlShack/OwlShack/internal/store"
 )
@@ -35,6 +35,7 @@ type contactJSON struct {
 	LastAdvertTS    uint32                `json:"lastAdvertTs"`
 	AddedAt         string                `json:"addedAt"`
 	Metadata        store.ContactMetadata `json:"metadata"`
+	FloodScope      string                `json:"floodScope"`
 }
 
 // contactToJSON serializes a contact's own cached record, independent of discovered_peers.
@@ -58,6 +59,7 @@ func (s *Server) contactToJSON(c *store.Contact) contactJSON {
 		LastAdvertTS:    c.LastAdvertTS,
 		AddedAt:         c.AddedAt.UTC().Format(time.RFC3339),
 		Metadata:        c.Metadata,
+		FloodScope:      c.FloodScope,
 	}
 }
 
@@ -391,6 +393,38 @@ func (s *Server) handleSetContactLocation(w http.ResponseWriter, r *http.Request
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleSetContactFloodScope(w http.ResponseWriter, r *http.Request) {
+	b, ok := s.configBackend(w)
+	if !ok {
+		return
+	}
+	cid, ok := s.companionID(r.Context(), w, r.PathValue("name"))
+	if !ok {
+		return
+	}
+	pubkey, err := hex.DecodeString(r.PathValue("pubkey"))
+	if err != nil || len(pubkey) == 0 {
+		writeError(w, http.StatusBadRequest, "invalid pubkey hex")
+		return
+	}
+	var body struct {
+		FloodScope string `json:"floodScope"`
+	}
+	if err := readJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	err = b.SetContactFloodScope(r.Context(), cid, pubkey, body.FloodScope)
+	switch {
+	case errors.Is(err, store.ErrNotContact):
+		writeError(w, http.StatusNotFound, "contact not found")
+	case err != nil:
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
+	default:
+		w.WriteHeader(http.StatusNoContent)
+	}
 }
 
 // companionID maps the name in the URL to the surrogate id, writing a 404 when there is no such companion.

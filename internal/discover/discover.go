@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
-	"github.com/meshcore-go/meshcore-go/node"
+	meshcore "github.com/OwlShack/meshcore-go"
+	"github.com/OwlShack/meshcore-go/node"
 )
 
 // Firmware ADV_TYPE_* (AdvertDataHelpers.h); the request's filter byte is a bitmask over these.
@@ -33,7 +33,7 @@ const Window = 30 * time.Second
 
 // Sender is the part of a node this needs: any running node can carry the request.
 type Sender interface {
-	SendPacketDelayed(pkt *meshcore.Packet, priority uint8, delay time.Duration) error
+	SendZeroHop(pkt *meshcore.Packet, scope *meshcore.Region, delay time.Duration) error
 	OnPacket(t byte, h node.PacketHandler)
 	Identity() meshcore.LocalIdentity
 }
@@ -111,10 +111,10 @@ func (s *Service) Start(filter byte, since time.Time) error {
 	}
 	s.log.Info("discovery scan started", "filter", filter, "window", Window)
 	// Zero-hop: direct route with no path, so only nodes hearing us on air can answer.
-	return s.send.SendPacketDelayed(&meshcore.Packet{
+	return s.send.SendZeroHop(&meshcore.Packet{
 		Header:  meshcore.MakeHeader(meshcore.RouteTypeDirect, meshcore.PayloadTypeControl, 0),
 		Payload: payload,
-	}, node.PrioritySend, 0)
+	}, nil, 0)
 }
 
 // State reports the current scan, whether or not it is still running.

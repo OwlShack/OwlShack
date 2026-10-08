@@ -3,8 +3,8 @@ package modem
 import (
 	"testing"
 
-	"github.com/meshcore-go/meshcore-go/hardware"
-	"github.com/meshcore-go/meshcore-go/hardware/sx12xx"
+	"github.com/OwlShack/meshcore-go/hardware"
+	"github.com/OwlShack/meshcore-go/hardware/sx12xx"
 )
 
 var _ StatsProvider = (*sx12xxStatsProvider)(nil)
@@ -125,8 +125,8 @@ func TestSx12xxStats_SurvivesWithNoModemAttached(t *testing.T) {
 	if got := p.PacketScore(-4.75, 64); got != 0 {
 		t.Errorf("PacketScore = %v, want 0 with no modem attached", got)
 	}
-	if got := p.Stats(t.Context()).NoiseFloor; got != 0 {
-		t.Errorf("NoiseFloor = %d, want 0 with no modem attached", got)
+	if ds := p.Stats(t.Context()); ds.HaveNoiseFloor {
+		t.Errorf("noise floor %d reported with no modem attached, want none", ds.NoiseFloor)
 	}
 }
 

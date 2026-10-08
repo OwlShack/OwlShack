@@ -1,8 +1,10 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -47,21 +49,37 @@ type Settings struct {
 	// PacketRetentionDays is how long the packet log keeps rows, 1-365; the column is NOT NULL and CHECKed.
 	PacketRetentionDays int
 	SetupComplete       bool
+	// FloodRegions is the region list, JSON in settings.flood_regions; FloodScope is the default, "everywhere" or "region:<name>".
+	FloodRegions []FloodRegion
+	FloodScope   string
+}
+
+// FloodRegion is one name in the Settings region list; Parent is the region it sits under, "*" at the top, for organising only.
+type FloodRegion struct {
+	Name   string `json:"name"`
+	Parent string `json:"parent"`
 }
 
 type SettingsRepo struct{ db *sql.DB }
 
 func (r *SettingsRepo) Get(ctx context.Context) (*Settings, error) {
 	var s Settings
+	var floodRegions string
 	err := r.db.QueryRowContext(ctx, `
-		SELECT log_level, connection_type, connection, baud_rate, spi_board, freq, bw, sf, cr, tx, listen_addr, map_provider, map_dark_style, map_tile_key, path_hash_size, duty_cycle_pct, packet_retention_days, setup_complete, modem_token
+		SELECT log_level, connection_type, connection, baud_rate, spi_board, freq, bw, sf, cr, tx, listen_addr, map_provider, map_dark_style, map_tile_key, path_hash_size, duty_cycle_pct, packet_retention_days, setup_complete, modem_token, flood_regions, flood_scope
 		FROM settings WHERE id = 1`).Scan(
 		&s.LogLevel, &s.ConnectionType, &s.Connection, &s.BaudRate, &s.SPIBoard,
 		&s.Freq, &s.BW, &s.SF, &s.CR, &s.TX, &s.ListenAddr, &s.MapProvider, &s.MapDarkStyle, &s.MapTileKey, &s.PathHashSize,
-		&s.DutyCyclePct, &s.PacketRetentionDays, &s.SetupComplete, &s.ModemToken,
+		&s.DutyCyclePct, &s.PacketRetentionDays, &s.SetupComplete, &s.ModemToken, &floodRegions, &s.FloodScope,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("getting settings: %w", err)
+	}
+	s.FloodRegions = []FloodRegion{}
+	if floodRegions != "" {
+		if err := json.Unmarshal([]byte(floodRegions), &s.FloodRegions); err != nil {
+			return nil, fmt.Errorf("decoding settings flood regions: %w", err)
+		}
 	}
 	return &s, nil
 }
@@ -75,10 +93,18 @@ func (r *SettingsRepo) PacketRetentionDays(ctx context.Context) (int, error) {
 }
 
 func (r *SettingsRepo) Set(ctx context.Context, s *Settings) error {
-	_, err := r.db.ExecContext(ctx, `
+	regions := s.FloodRegions
+	if regions == nil {
+		regions = []FloodRegion{}
+	}
+	floodRegionsJSON, err := json.Marshal(regions)
+	if err != nil {
+		return fmt.Errorf("encoding settings flood regions: %w", err)
+	}
+	_, err = r.db.ExecContext(ctx, `
 		INSERT INTO settings
-			(id, log_level, connection_type, connection, baud_rate, spi_board, freq, bw, sf, cr, tx, listen_addr, map_provider, map_dark_style, map_tile_key, path_hash_size, duty_cycle_pct, packet_retention_days, setup_complete, modem_token)
-		VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			(id, log_level, connection_type, connection, baud_rate, spi_board, freq, bw, sf, cr, tx, listen_addr, map_provider, map_dark_style, map_tile_key, path_hash_size, duty_cycle_pct, packet_retention_days, setup_complete, modem_token, flood_regions, flood_scope)
+		VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			log_level=excluded.log_level, connection_type=excluded.connection_type,
 			spi_board=excluded.spi_board,
@@ -87,10 +113,11 @@ func (r *SettingsRepo) Set(ctx context.Context, s *Settings) error {
 			listen_addr=excluded.listen_addr, map_provider=excluded.map_provider, map_dark_style=excluded.map_dark_style, map_tile_key=excluded.map_tile_key,
 			path_hash_size=excluded.path_hash_size, duty_cycle_pct=excluded.duty_cycle_pct,
 			packet_retention_days=excluded.packet_retention_days,
-			setup_complete=excluded.setup_complete, modem_token=excluded.modem_token`,
+			setup_complete=excluded.setup_complete, modem_token=excluded.modem_token,
+			flood_regions=excluded.flood_regions, flood_scope=excluded.flood_scope`,
 		s.LogLevel, s.ConnectionType, s.Connection, s.BaudRate, s.SPIBoard,
 		s.Freq, s.BW, s.SF, s.CR, s.TX, s.ListenAddr, s.MapProvider, s.MapDarkStyle, s.MapTileKey, s.PathHashSize,
-		s.DutyCyclePct, s.PacketRetentionDays, s.SetupComplete, s.ModemToken,
+		s.DutyCyclePct, s.PacketRetentionDays, s.SetupComplete, s.ModemToken, floodRegionsJSON, cmp.Or(s.FloodScope, "everywhere"),
 	)
 	if err != nil {
 		return fmt.Errorf("setting settings: %w", err)

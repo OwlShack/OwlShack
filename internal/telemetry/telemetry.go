@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
+	meshcore "github.com/OwlShack/meshcore-go"
 )
 
 // ChannelSelf is the firmware's TELEM_CHANNEL_SELF; external sensors land on channels >= 2 on firmware 1.16+.

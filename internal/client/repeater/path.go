@@ -5,7 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
+	meshcore "github.com/OwlShack/meshcore-go"
 )
 
 type PeerPathInfo struct {
@@ -21,17 +21,17 @@ type PeerPathInfo struct {
 func (rm *Client) GetPeerPath(pubkeyHex string) (*PeerPathInfo, error) {
 	pubkeyBytes, err := hex.DecodeString(pubkeyHex)
 	if err != nil {
-		return nil, fmt.Errorf("invalid pubkey hex: %w", err)
+		return nil, fmt.Errorf("%w: hex: %w", ErrBadPubkey, err)
 	}
 
 	peerIdentity, err := meshcore.NewIdentityFromBytes(pubkeyBytes)
 	if err != nil {
-		return nil, fmt.Errorf("invalid pubkey: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrBadPubkey, err)
 	}
 
 	peer := rm.node.Peers().Lookup(peerIdentity.PublicKey())
 	if peer == nil {
-		return nil, fmt.Errorf("peer not found in peer table")
+		return nil, ErrUnknownPeer
 	}
 
 	routeSize := int(max(peer.OutPathHashSize, 1))
@@ -51,16 +51,16 @@ func (rm *Client) GetPeerPath(pubkeyHex string) (*PeerPathInfo, error) {
 func (rm *Client) ResetPeerPath(pubkeyHex string) error {
 	pubkeyBytes, err := hex.DecodeString(pubkeyHex)
 	if err != nil {
-		return fmt.Errorf("invalid pubkey hex: %w", err)
+		return fmt.Errorf("%w: hex: %w", ErrBadPubkey, err)
 	}
 
 	peerIdentity, err := meshcore.NewIdentityFromBytes(pubkeyBytes)
 	if err != nil {
-		return fmt.Errorf("invalid pubkey: %w", err)
+		return fmt.Errorf("%w: %w", ErrBadPubkey, err)
 	}
 
 	if !rm.node.Peers().ResetOutPath(peerIdentity.PublicKey()) {
-		return fmt.Errorf("peer not found in peer table")
+		return ErrUnknownPeer
 	}
 	if err := rm.saveOutPath(pubkeyBytes, nil, 0); err != nil {
 		return err
@@ -73,15 +73,15 @@ func (rm *Client) ResetPeerPath(pubkeyHex string) error {
 func (rm *Client) SetPeerPath(pubkeyHex string, path []byte, bytesPerHop uint8) error {
 	pubkeyBytes, err := hex.DecodeString(pubkeyHex)
 	if err != nil {
-		return fmt.Errorf("invalid pubkey hex: %w", err)
+		return fmt.Errorf("%w: hex: %w", ErrBadPubkey, err)
 	}
 	peerIdentity, err := meshcore.NewIdentityFromBytes(pubkeyBytes)
 	if err != nil {
-		return fmt.Errorf("invalid pubkey: %w", err)
+		return fmt.Errorf("%w: %w", ErrBadPubkey, err)
 	}
 	key := peerIdentity.PublicKey()
 	if rm.node.Peers().Lookup(key) == nil {
-		return fmt.Errorf("peer not found in peer table")
+		return ErrUnknownPeer
 	}
 	// The row first and the table only once it is saved, so a failed save changes nothing live.
 	var saveErr error

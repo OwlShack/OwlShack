@@ -1,6 +1,8 @@
 package api
 
 import (
+	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -37,18 +39,7 @@ func (s *Server) handleAddChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := adder(body.Name, body.PrivateKey); err != nil {
-		writeError(w, http.StatusConflict, err.Error())
-		return
-	}
-
-	if persist := s.ConfigPersist(); persist != nil {
-		if err := persist(r.Context()); err != nil {
-			s.log.Error("config persist failed after channel add", "error", err)
-		}
-	}
-
-	w.WriteHeader(http.StatusNoContent)
+	s.finishChannelEdit(w, r, "add", adder(body.Name, body.PrivateKey))
 }
 
 func (s *Server) handleRemoveChannel(w http.ResponseWriter, r *http.Request) {
@@ -67,17 +58,30 @@ func (s *Server) handleRemoveChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := remover(channelName); err != nil {
-		writeError(w, http.StatusConflict, err.Error())
+	s.finishChannelEdit(w, r, "remove", remover(channelName))
+}
+
+// finishChannelEdit answers a runtime channel edit: 422 for a request at fault, its own status when it carries one, 409 for one the channels refuse, and 500 when the change is made but not saved, so it would be lost at restart.
+func (s *Server) finishChannelEdit(w http.ResponseWriter, r *http.Request, op string, err error) {
+	if err != nil {
+		status := http.StatusConflict
+		verr, serr := (*ValidationError)(nil), (*StatusError)(nil)
+		switch {
+		case errors.As(err, &verr):
+			status = http.StatusUnprocessableEntity
+		case errors.As(err, &serr):
+			status = serr.Status
+		}
+		writeError(w, status, err.Error())
 		return
 	}
-
 	if persist := s.ConfigPersist(); persist != nil {
 		if err := persist(r.Context()); err != nil {
-			s.log.Error("config persist failed after channel remove", "error", err)
+			s.log.Error("config persist failed after a channel edit", "op", op, "error", err)
+			writeError(w, http.StatusInternalServerError, "the channel was changed but not saved, so it reverts at restart: "+err.Error())
+			return
 		}
 	}
-
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -182,8 +186,7 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if sendErr != nil {
-		s.log.Error("channel/dm send", "error", sendErr)
-		writeError(w, http.StatusInternalServerError, "send failed: "+sendErr.Error())
+		s.writeOpError(w, "channel/dm send", fmt.Errorf("send failed: %w", sendErr))
 		return
 	}
 
@@ -204,6 +207,7 @@ type messageJSON struct {
 	Hops         *int     `json:"hops,omitempty"`
 	PathHashSize *int     `json:"pathHashSize,omitempty"`
 	Status       *string  `json:"status,omitempty"`
+	FloodScope   string   `json:"floodScope"`
 }
 
 func toMessageJSON(m store.Message) messageJSON {
@@ -221,6 +225,7 @@ func toMessageJSON(m store.Message) messageJSON {
 		Hops:         m.Hops,
 		PathHashSize: m.PathHashSize,
 		Status:       m.Status,
+		FloodScope:   m.FloodScope,
 	}
 }
 

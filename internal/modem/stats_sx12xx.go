@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/meshcore-go/meshcore-go/hardware/sx12xx"
+	"github.com/OwlShack/meshcore-go/hardware/sx12xx"
 )
 
 // sx12xxStatsProvider reports what a directly-attached SPI radio can measure, with no MeshCore firmware in front of the chip.
@@ -50,7 +50,8 @@ func (p *sx12xxStatsProvider) CachedStats() DeviceStats { return p.Stats(context
 func (p *sx12xxStatsProvider) Stats(context.Context) DeviceStats {
 	ds := DeviceStats{UptimeSecs: uint32(time.Since(p.startTime).Seconds())}
 	if m := p.modem.Load(); m != nil {
-		ds.NoiseFloor = int16(m.NoiseFloor())
+		nf, ok := m.NoiseFloor()
+		ds.NoiseFloor, ds.HaveNoiseFloor = int16(nf), ok
 	}
 	return ds
 }

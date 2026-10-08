@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
-	"github.com/meshcore-go/meshcore-go/node"
+	meshcore "github.com/OwlShack/meshcore-go"
+	"github.com/OwlShack/meshcore-go/node"
 )
 
 type fakeNode struct {
@@ -19,7 +19,7 @@ type fakeNode struct {
 	h    func(*meshcore.Packet)
 }
 
-func (f *fakeNode) SendPacketDelayed(pkt *meshcore.Packet, _ uint8, _ time.Duration) error {
+func (f *fakeNode) SendZeroHop(pkt *meshcore.Packet, _ *meshcore.Region, _ time.Duration) error {
 	f.sent = append(f.sent, pkt)
 	return nil
 }

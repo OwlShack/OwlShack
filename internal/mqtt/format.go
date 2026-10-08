@@ -9,7 +9,7 @@ import (
 
 	"github.com/OwlShack/OwlShack/internal/buildinfo"
 	"github.com/OwlShack/OwlShack/internal/modem"
-	meshcore "github.com/meshcore-go/meshcore-go"
+	meshcore "github.com/OwlShack/meshcore-go"
 )
 
 // Zone-aware so downstream observers don't read our feed as naive local time and clamp rxTime to their ingest time; always format a UTC time with it.
@@ -127,7 +127,7 @@ type statsBlock struct {
 	// Firmware stats-core / stats-radio key names; omitted when unmeasurable, but a KISS 0 still publishes.
 	BatteryMV  *uint16  `json:"battery_mv,omitempty"`
 	MCUTempC   *float64 `json:"mcu_temp_c,omitempty"`
-	NoiseFloor int16    `json:"noise_floor"`
+	NoiseFloor *int16   `json:"noise_floor,omitempty"`
 	LastRSSI   int16    `json:"last_rssi"`
 	LastSNR    float64  `json:"last_snr"`
 	// The firmware's rx_air_time / total_air_time; TX arrives via Observer.NoteTx, so it counts the whole process.
@@ -224,6 +224,10 @@ func formatStatus(status, originName, originID string, radio modem.RadioInfo, ds
 	if ds.HaveMCUTemp {
 		mcuTemp = &ds.MCUTempC
 	}
+	var noiseFloor *int16
+	if ds.HaveNoiseFloor {
+		noiseFloor = &ds.NoiseFloor
+	}
 	var batteryMV *uint16
 	if ds.HaveBattery {
 		batteryMV = &ds.BatteryMV
@@ -252,7 +256,7 @@ func formatStatus(status, originName, originID string, radio modem.RadioInfo, ds
 
 			BatteryMV:  batteryMV,
 			MCUTempC:   mcuTemp,
-			NoiseFloor: ds.NoiseFloor,
+			NoiseFloor: noiseFloor,
 			LastSNR:    obs.LastSNR,
 			LastRSSI:   obs.LastRSSI,
 			RxAirSecs:  uint32(obs.RxMs / 1000),

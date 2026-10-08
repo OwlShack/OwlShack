@@ -27,7 +27,19 @@ export interface Settings {
   // Days of packets the log keeps, 1-365; always set.
   packetRetentionDays: number;
   setupComplete: boolean;
+  // The regions every picker offers, and the default every "same as" level ends at.
+  floodRegions: FloodRegion[];
+  floodScope: FloodScope;
 }
+
+// A name in the Settings region list, under its parent ("*" at the top); the nesting only organises the list.
+export interface FloodRegion {
+  name: string;
+  parent: string;
+}
+
+// Where a flood we send goes: the level above's choice, everywhere (unscoped), or "region:<name>".
+export type FloodScope = "inherit" | "everywhere" | `region:${string}`;
 
 // One SPI radio hat this build knows about, from GET /api/spi/boards.
 export interface SpiBoard {
@@ -124,6 +136,7 @@ export interface ConfigCompanion {
   telemetryBase: TelemetryMode;
   telemetryLocation: TelemetryMode;
   telemetryEnvironment: TelemetryMode;
+  floodScope: FloodScope;
 }
 
 export type TelemetryMode = "deny" | "selected" | "contacts";
@@ -139,6 +152,7 @@ export interface ConfigChannel {
   companionId: number;
   name: string;
   privateKeySet: boolean;
+  floodScope: FloodScope;
 }
 
 export interface Trigger {
@@ -160,6 +174,7 @@ export interface Trigger {
   location: TriggerLocation | null;
   // region ids from /api/regions; null takes alerts from anywhere.
   regions: string[] | null;
+  floodScope: FloodScope;
 }
 
 // The point a cap bot's alerts must cover, or come within radiusKm of; null takes alerts from anywhere.
@@ -190,16 +205,19 @@ export interface ConfigRepeater {
   directTxDelayFactor: number | null;
   rxDelayBase: number | null;
   multiAcks: number | null;
-  defaultRegion: string;
+  floodScope: FloodScope;
   adminPasswordSet: boolean;
   guestPasswordSet: boolean;
   ownerInfo: string;
   regions: RepeaterRegion[];
+  homeRegion: string; // "*" when none is set
 }
 
 // A transport scope the repeater relays; its key derives from the name as SHA256(name)[:16].
 export interface RepeaterRegion {
   name: string;
+  // The region it sits under, "*" at the top; "" only on "*" itself. Organising only: matching ignores it.
+  parent: string;
   denyFlood: boolean;
 }
 
@@ -306,11 +324,13 @@ export interface CompanionInput {
   pathHashSize?: number | null; // null = inherit the global default
   dmPolicy?: string;
   dmAllow?: string[] | null;
+  floodScope: FloodScope;
 }
 
 export interface ChannelInput {
   name: string;
   privateKey?: string;
+  floodScope: FloodScope;
 }
 
 // Repeater node config is edited per-section (no whole-config bulk write).
@@ -339,7 +359,6 @@ export interface RepeaterRelayInput {
   directTxDelayFactor?: number | null;
   rxDelayBase?: number | null;
   multiAcks?: number | null;
-  defaultRegion?: string; // "" = unscoped flood adverts
   advertInterval?: number | null;
   floodAdvertInterval?: number | null;
 }
@@ -404,6 +423,7 @@ export interface TriggerInput {
   url?: string | null;
   location: TriggerLocation | null;
   regions: string[] | null;
+  floodScope: FloodScope;
 }
 
 // A first-level region (state, province, NZ region) with its outline: [lon, lat] rings, read even-odd.
@@ -450,6 +470,8 @@ async function requestId(url: string, method: string, body?: unknown): Promise<n
 
 export const configApi = {
   putSettings: (input: SettingsInput) => request("/api/config/settings", "PUT", input),
+  putFloodRegions: (regions: FloodRegion[], floodScope: FloodScope) =>
+    request("/api/config/regions", "PUT", { regions, floodScope }),
   // The radio hats this binary knows how to wire. Empty until the backend is
   // up, which the UI shows as "no boards" rather than an empty picker.
   getSpiBoards: () => requestJSON<SpiBoard[]>("/api/spi/boards", "GET"),
@@ -505,8 +527,12 @@ export const configApi = {
     request("/api/config/repeater/relay", "PUT", input),
   updateRepeaterAdmin: (input: RepeaterAdminInput) =>
     request("/api/config/repeater/admin", "PUT", input),
-  addRepeaterRegion: (name: string, denyFlood: boolean) =>
-    request("/api/config/repeater/regions", "POST", { name, denyFlood }),
+  setRepeaterHome: (region: string) => request("/api/config/repeater/home", "PUT", { region }),
+  setRepeaterScope: (floodScope: FloodScope) => request("/api/config/repeater/scope", "PUT", { floodScope }),
+  addRepeaterRegion: (name: string, parent: string, denyFlood: boolean) =>
+    request("/api/config/repeater/regions", "POST", { name, parent, denyFlood }),
+  moveRepeaterRegion: (name: string, parent: string) =>
+    request(`/api/config/repeater/regions/${encodeURIComponent(name)}`, "PATCH", { parent }),
   setRepeaterRegionFlood: (name: string, denyFlood: boolean) =>
     request(`/api/config/repeater/regions/${encodeURIComponent(name)}`, "PATCH", { denyFlood }),
   removeRepeaterRegion: (name: string) =>

@@ -9,7 +9,7 @@ import (
 
 	"github.com/OwlShack/OwlShack/internal/api"
 	"github.com/OwlShack/OwlShack/internal/store"
-	meshcore "github.com/meshcore-go/meshcore-go"
+	meshcore "github.com/OwlShack/meshcore-go"
 )
 
 // Sent identifies the message a tracked packet belongs to. A struct rather than four arguments:

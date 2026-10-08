@@ -4,13 +4,32 @@ import (
 	"context"
 	"encoding/hex"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"github.com/OwlShack/OwlShack/internal/api"
+	"github.com/OwlShack/OwlShack/internal/config"
 	"github.com/OwlShack/OwlShack/internal/store"
-	meshcore "github.com/meshcore-go/meshcore-go"
-	"github.com/meshcore-go/meshcore-go/node"
+	meshcore "github.com/OwlShack/meshcore-go"
+	"github.com/OwlShack/meshcore-go/node"
 )
+
+// floodLabels is the regions received packets are named from, swapped whenever the config is applied.
+var floodLabels atomic.Pointer[[]*meshcore.Region]
+
+func setFloodLabels(cfg *config.Config) {
+	regions := cfg.LabelRegions()
+	floodLabels.Store(&regions)
+}
+
+// floodScopeOf names the region a received packet carried; see config.PacketScope.
+func floodScopeOf(pkt *meshcore.Packet) string {
+	var regions []*meshcore.Region
+	if p := floodLabels.Load(); p != nil {
+		regions = *p
+	}
+	return config.PacketScope(pkt, regions)
+}
 
 // TX is hooked on the modem, not a virtual radio: a virtual radio fires outbound handlers only for its own sends.
 func wirePacketLogger(mux *node.RadioMux, modem node.Modem, db *store.Store, srv *api.Server, compReg *companionRegistry) {
@@ -155,5 +174,6 @@ func packetBroadcastMsg(direction string, receivedAt time.Time, data []byte, pkt
 	msg["hops"] = pkt.PathHashCount()
 	msg["packetHash"], msg["path"] = store.PacketFieldsFromPkt(pkt)
 	msg["summary"] = api.PacketSummary(pkt, channels)
+	msg["floodScope"] = floodScopeOf(pkt)
 	return msg
 }

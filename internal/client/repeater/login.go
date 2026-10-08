@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"time"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
+	meshcore "github.com/OwlShack/meshcore-go"
+
+	"github.com/OwlShack/OwlShack/internal/meshpath"
 )
 
 type LoginResult struct {
@@ -28,17 +30,17 @@ func (rm *Client) SendRoomLogin(pubkeyHex, password string, syncSince uint32, ti
 func (rm *Client) sendLogin(pubkeyHex, password string, roomSyncSince *uint32, timeout time.Duration) (*LoginResult, error) {
 	pubkeyBytes, err := hex.DecodeString(pubkeyHex)
 	if err != nil {
-		return nil, fmt.Errorf("invalid pubkey hex: %w", err)
+		return nil, fmt.Errorf("%w: hex: %w", ErrBadPubkey, err)
 	}
 
 	peerIdentity, err := meshcore.NewIdentityFromBytes(pubkeyBytes)
 	if err != nil {
-		return nil, fmt.Errorf("invalid pubkey: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrBadPubkey, err)
 	}
 
 	peer := rm.node.Peers().Lookup(peerIdentity.PublicKey())
 	if peer == nil {
-		return nil, fmt.Errorf("peer not found in peer table")
+		return nil, ErrUnknownPeer
 	}
 
 	// The static identity (not an ephemeral key) puts us in the repeater's ACL, so its getClient() lookup accepts blank-password reauth.
@@ -107,7 +109,8 @@ func (rm *Client) sendLogin(pubkeyHex, password string, roomSyncSince *uint32, t
 
 	pkt, outPath, hashSize := rm.routedPacket(peer, meshcore.PayloadTypeAnonReq, payload)
 
-	if err := rm.node.SendPacket(pkt); err != nil {
+	pub := peer.Identity.PublicKey()
+	if err := meshpath.Send(rm.node, pkt, rm.scopeFor(pub[:]), 0); err != nil {
 		return nil, fmt.Errorf("sending login: %w", err)
 	}
 
@@ -116,22 +119,19 @@ func (rm *Client) sendLogin(pubkeyHex, password string, roomSyncSince *uint32, t
 
 	select {
 	case data := <-resultCh:
-		isAdmin := len(data) > 6 && data[6] == 1
-		perms := 0
-		if len(data) > 7 {
-			perms = int(data[7])
-		}
+		reply, _ := meshcore.ParseLoginReply(data[4:]) // isLoginReply already parsed it
+		isAdmin := reply.Admin == 1
+		perms := int(reply.Permissions)
 		role := ""
 		if roomSyncSince != nil {
-			// Room login response byte 6: 1=admin, 2=read-only (guest), 0=read-write
-			role = "read-write"
-			if len(data) > 6 {
-				switch data[6] {
-				case 1:
-					role = "admin"
-				case 2:
-					role = "read-only"
-				}
+			// Room login reply admin byte: 1=admin, 2=read-only (guest), 0=read-write
+			switch reply.Admin {
+			case 1:
+				role = "admin"
+			case 2:
+				role = "read-only"
+			default:
+				role = "read-write"
 			}
 		}
 		rm.mu.Lock()
@@ -155,6 +155,6 @@ func (rm *Client) sendLogin(pubkeyHex, password string, roomSyncSince *uint32, t
 			rm.node.Peers().ResetOutPath(peerIdentity.PublicKey())
 			rm.persistOutPath(pubkeyBytes, nil, 0)
 		}
-		return nil, fmt.Errorf("login timed out after %s", wait)
+		return nil, fmt.Errorf("login timed out after %s: %w", wait, ErrNoReply)
 	}
 }

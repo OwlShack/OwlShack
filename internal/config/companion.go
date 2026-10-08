@@ -26,6 +26,9 @@ type CompanionConfig struct {
 	// Overrides Config.PathHashSize for this companion (bytes); nil == inherit, resolved at startup.
 	PathHashSize *int `json:"pathHashSize,omitempty" yaml:"pathHashSize,omitempty" toml:"pathHashSize,omitempty"`
 
+	// FloodScope is the region for this companion's adverts and the fallback for its channels and contacts.
+	FloodScope FloodScope `json:"floodScope,omitempty" yaml:"floodScope,omitempty" toml:"floodScope,omitempty"`
+
 	// Standalone channels (not tied to triggers)
 	Channels *ChannelList `json:"channels,omitempty" yaml:"channels,omitempty" toml:"channels,omitempty"`
 

@@ -9,7 +9,7 @@ import (
 
 	"github.com/OwlShack/OwlShack/internal/config"
 	"github.com/OwlShack/OwlShack/internal/logging"
-	meshcore "github.com/meshcore-go/meshcore-go"
+	meshcore "github.com/OwlShack/meshcore-go"
 )
 
 // DirectMessage is a decrypted plain DM the companion has already accepted and persisted.

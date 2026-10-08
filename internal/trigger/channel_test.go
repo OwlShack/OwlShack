@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/OwlShack/OwlShack/internal/config"
-	meshcore "github.com/meshcore-go/meshcore-go"
+	meshcore "github.com/OwlShack/meshcore-go"
 )
 
 const responsePattern = `^@\[{{.Sender | reQuote}}\].+`

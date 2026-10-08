@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
@@ -30,15 +31,17 @@ type repeaterDTO struct {
 	DirectTxDelayFactor *float64            `json:"directTxDelayFactor"`
 	RxDelayBase         *float64            `json:"rxDelayBase"`
 	MultiAcks           *int                `json:"multiAcks"`
-	DefaultRegion       string              `json:"defaultRegion"`
+	FloodScope          string              `json:"floodScope"`
 	AdminPasswordSet    bool                `json:"adminPasswordSet"`
 	GuestPasswordSet    bool                `json:"guestPasswordSet"`
 	OwnerInfo           string              `json:"ownerInfo"`
 	Regions             []repeaterRegionDTO `json:"regions"`
+	HomeRegion          string              `json:"homeRegion"` // "*" when none is set, as the firmware reports it
 }
 
 type repeaterRegionDTO struct {
 	Name      string `json:"name"`
+	Parent    string `json:"parent"` // "*" for the top; "" only on "*" itself
 	DenyFlood bool   `json:"denyFlood"`
 }
 
@@ -60,7 +63,7 @@ func (s *Server) handleGetRepeater(w http.ResponseWriter, r *http.Request) {
 
 	regions := make([]repeaterRegionDTO, 0, len(rep.Regions))
 	for _, rg := range rep.Regions {
-		regions = append(regions, repeaterRegionDTO{Name: rg.Name, DenyFlood: rg.DenyFlood})
+		regions = append(regions, repeaterRegionDTO{Name: rg.Name, Parent: rg.Parent, DenyFlood: rg.DenyFlood})
 	}
 
 	writeJSON(w, http.StatusOK, repeaterDTO{
@@ -83,11 +86,12 @@ func (s *Server) handleGetRepeater(w http.ResponseWriter, r *http.Request) {
 		DirectTxDelayFactor: rep.DirectTxDelayFactor,
 		RxDelayBase:         rep.RxDelayBase,
 		MultiAcks:           rep.MultiAcks,
-		DefaultRegion:       rep.DefaultRegion,
+		FloodScope:          rep.FloodScope,
 		AdminPasswordSet:    rep.AdminPassword != "",
 		GuestPasswordSet:    rep.GuestPassword != "",
 		OwnerInfo:           rep.OwnerInfo,
 		Regions:             regions,
+		HomeRegion:          cmp.Or(rep.HomeRegion, "*"),
 	})
 }
 
@@ -103,10 +107,19 @@ func repeaterSection[T any](s *Server, w http.ResponseWriter, r *http.Request, f
 		return
 	}
 	if err := fn(b, r.Context(), in); err != nil {
-		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		writeConfigError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// writeConfigError answers a refused config change: its own status when it carries one, else 422.
+func writeConfigError(w http.ResponseWriter, err error) {
+	status := http.StatusUnprocessableEntity
+	if serr := (*StatusError)(nil); errors.As(err, &serr) {
+		status = serr.Status
+	}
+	writeError(w, status, err.Error())
 }
 
 func (s *Server) handleCreateRepeater(w http.ResponseWriter, r *http.Request) {
@@ -125,6 +138,14 @@ func (s *Server) handleUpdateRepeaterAdmin(w http.ResponseWriter, r *http.Reques
 	repeaterSection(s, w, r, Backend.UpdateRepeaterAdmin)
 }
 
+func (s *Server) handleSetRepeaterScope(w http.ResponseWriter, r *http.Request) {
+	repeaterSection(s, w, r, Backend.SetRepeaterFloodScope)
+}
+
+func (s *Server) handleSetRepeaterHome(w http.ResponseWriter, r *http.Request) {
+	repeaterSection(s, w, r, Backend.SetRepeaterHome)
+}
+
 func (s *Server) handleAddRepeaterRegion(w http.ResponseWriter, r *http.Request) {
 	repeaterSection(s, w, r, Backend.AddRepeaterRegion)
 }
@@ -136,14 +157,26 @@ func (s *Server) handlePatchRepeaterRegion(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var in struct {
-		DenyFlood bool `json:"denyFlood"`
+		DenyFlood *bool   `json:"denyFlood"`
+		Parent    *string `json:"parent"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
-	if err := b.SetRepeaterRegionFlood(r.Context(), r.PathValue("name"), in.DenyFlood); err != nil {
-		writeError(w, http.StatusUnprocessableEntity, err.Error())
+	name := r.PathValue("name")
+	var err error
+	switch {
+	case (in.DenyFlood == nil) == (in.Parent == nil):
+		writeError(w, http.StatusBadRequest, "send one of denyFlood or parent")
+		return
+	case in.Parent != nil:
+		err = b.MoveRepeaterRegion(r.Context(), name, *in.Parent)
+	default:
+		err = b.SetRepeaterRegionFlood(r.Context(), name, *in.DenyFlood)
+	}
+	if err != nil {
+		writeConfigError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -155,7 +188,7 @@ func (s *Server) handleDeleteRepeaterRegion(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if err := b.RemoveRepeaterRegion(r.Context(), r.PathValue("name")); err != nil {
-		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		writeConfigError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

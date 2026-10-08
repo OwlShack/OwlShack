@@ -44,3 +44,28 @@ func (s *Server) handleStartDiscovery(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusAccepted, state)
 }
+
+// handleRegionScanState reports the current or last Discover nearby run.
+func (s *Server) handleRegionScanState(w http.ResponseWriter, r *http.Request) {
+	b := s.backendRef()
+	if b == nil {
+		writeError(w, http.StatusServiceUnavailable, "node not running")
+		return
+	}
+	writeJSON(w, http.StatusOK, b.RegionScanState())
+}
+
+// handleStartRegionScan starts Discover nearby, or returns the run already going; poll the state for progress.
+func (s *Server) handleStartRegionScan(w http.ResponseWriter, r *http.Request) {
+	b := s.backendRef()
+	if b == nil {
+		writeError(w, http.StatusServiceUnavailable, "node not running")
+		return
+	}
+	state, err := b.StartRegionScan()
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, state)
+}

@@ -6,6 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { CoordLink } from "@/components/CoordLink";
 import { cn } from "@/lib/utils";
 import { apiErrorMessage } from "@/lib/apiError";
+import { useRemoteFetch } from "@/lib/remoteFetch";
 
 export interface TelemetryReading {
   channel: number;
@@ -35,12 +36,13 @@ export function TelemetryPanel({
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const fetchedRef = useRef(false);
+  const remoteFetch = useRemoteFetch();
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setErr(null);
     try {
-      const r = await fetch(`${apiBase}/telemetry`);
+      const r = await remoteFetch(`${apiBase}/telemetry`);
       if (!r.ok) throw new Error(await apiErrorMessage(r));
       const body: TelemetryData = await r.json();
       setData(body);
@@ -50,7 +52,7 @@ export function TelemetryPanel({
     } finally {
       setLoading(false);
     }
-  }, [apiBase]);
+  }, [apiBase, remoteFetch]);
 
   useEffect(() => {
     if (autoFetch && !fetchedRef.current) {

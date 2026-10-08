@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/OwlShack/OwlShack/internal/store"
-	meshcore "github.com/meshcore-go/meshcore-go"
+	meshcore "github.com/OwlShack/meshcore-go"
 )
 
 // The connection web folds the packet log's flood paths into routes toward us.

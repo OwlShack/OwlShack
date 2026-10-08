@@ -13,11 +13,11 @@ func TestMessages_ReceivedAtIsRequired(t *testing.T) {
 	cid := mkCompanion(t, st, "alpha")
 	sent := time.Date(2024, 5, 15, 10, 56, 25, 0, time.UTC)
 
-	if err := st.Messages.Insert(t.Context(), &Message{CompanionID: cid, Channel: "public", Direction: "rx", Timestamp: sent}); err == nil {
+	if err := st.Messages.Insert(t.Context(), &Message{FloodScope: "everywhere", CompanionID: cid, Channel: "public", Direction: "rx", Timestamp: sent}); err == nil {
 		t.Fatal("Insert accepted a message with no receive time")
 	}
 	got := time.Now().Truncate(time.Millisecond)
-	m := &Message{CompanionID: cid, Channel: "public", Direction: "rx", Timestamp: sent, ReceivedAt: got}
+	m := &Message{FloodScope: "everywhere", CompanionID: cid, Channel: "public", Direction: "rx", Timestamp: sent, ReceivedAt: got}
 	if err := st.Messages.Insert(t.Context(), m); err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +36,7 @@ func TestConversations_LastActiveIsReceiveTime(t *testing.T) {
 	st := newTestStore(t)
 	cid := mkCompanion(t, st, "alpha")
 	got := time.Now().Truncate(time.Millisecond)
-	m := &Message{CompanionID: cid, Channel: "Public", Direction: "rx", Sender: "far", Text: "hi",
+	m := &Message{FloodScope: "everywhere", CompanionID: cid, Channel: "Public", Direction: "rx", Sender: "far", Text: "hi",
 		Timestamp: time.Date(2024, 5, 15, 10, 56, 25, 0, time.UTC), ReceivedAt: got}
 	if err := st.Messages.Insert(t.Context(), m); err != nil {
 		t.Fatal(err)
@@ -60,7 +60,7 @@ func TestBackup_MessageWindowIsReceiveTime(t *testing.T) {
 		{Text: "sender two years behind, received yesterday", Timestamp: now.AddDate(-2, 0, 0), ReceivedAt: now.AddDate(0, 0, -1)},
 		{Text: "sender says now, received 40 days ago", Timestamp: now, ReceivedAt: now.AddDate(0, 0, -40)},
 	} {
-		m.CompanionID, m.Channel, m.Direction = cid, "Public", "rx"
+		m.CompanionID, m.Channel, m.Direction, m.FloodScope = cid, "Public", "rx", "everywhere"
 		if err := st.Messages.Insert(t.Context(), m); err != nil {
 			t.Fatal(err)
 		}

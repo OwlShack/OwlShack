@@ -25,6 +25,7 @@ type Trigger struct {
 	Location           *TriggerLocation
 	Regions            *[]string // region ids; nil takes alerts from anywhere
 	ChannelIDs         []int64
+	FloodScope         string // "inherit", "everywhere" or "region:<name>"
 }
 
 // TriggerLocation is a cap trigger's point and margin; a trigger without one takes alerts from anywhere.
@@ -58,7 +59,7 @@ func (r *TriggerRepo) scanRow(s interface{ Scan(...any) error }) (*Trigger, erro
 	if err := s.Scan(
 		&t.ID, &t.CompanionID, &t.Type, &t.Template, &t.CharLimitBehaviour,
 		&match, &contacts, &t.RetryTimeout, &t.MaxRetries, &t.PathHashSize, &t.Schedule, &t.URL, &t.FailoverPattern, &t.FailoverTimeout,
-		&lat, &lon, &km, &regions,
+		&lat, &lon, &km, &regions, &t.FloodScope,
 	); err != nil {
 		return nil, err
 	}
@@ -103,7 +104,7 @@ func (r *TriggerRepo) List(ctx context.Context) ([]Trigger, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, companion_id, type, template, char_limit_behaviour,
 		       match_patterns, contacts, retry_timeout, max_retries, path_hash_size, schedule, url, failover_pattern, failover_timeout,
-		       location_lat, location_lon, location_radius_km, location_regions
+		       location_lat, location_lon, location_radius_km, location_regions, flood_scope
 		FROM triggers ORDER BY companion_id ASC, id ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("querying triggers: %w", err)
@@ -134,7 +135,7 @@ func (r *TriggerRepo) ListByCompanion(ctx context.Context, companionID int64) ([
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, companion_id, type, template, char_limit_behaviour,
 		       match_patterns, contacts, retry_timeout, max_retries, path_hash_size, schedule, url, failover_pattern, failover_timeout,
-		       location_lat, location_lon, location_radius_km, location_regions
+		       location_lat, location_lon, location_radius_km, location_regions, flood_scope
 		FROM triggers WHERE companion_id = ? ORDER BY id ASC`, companionID)
 	if err != nil {
 		return nil, fmt.Errorf("querying triggers by companion: %w", err)
@@ -166,7 +167,7 @@ func (r *TriggerRepo) Get(ctx context.Context, id int64) (*Trigger, error) {
 	t, err := r.scanRow(r.db.QueryRowContext(ctx, `
 		SELECT id, companion_id, type, template, char_limit_behaviour,
 		       match_patterns, contacts, retry_timeout, max_retries, path_hash_size, schedule, url, failover_pattern, failover_timeout,
-		       location_lat, location_lon, location_radius_km, location_regions
+		       location_lat, location_lon, location_radius_km, location_regions, flood_scope
 		FROM triggers WHERE id = ?`, id))
 	if err != nil {
 		return nil, fmt.Errorf("getting trigger: %w", err)
@@ -188,12 +189,12 @@ func (r *TriggerRepo) Create(ctx context.Context, t *Trigger) error {
 	res, err := tx.ExecContext(ctx, `
 		INSERT INTO triggers
 			(companion_id, type, template, char_limit_behaviour, match_patterns, contacts, retry_timeout, max_retries, path_hash_size, schedule, url, failover_pattern, failover_timeout,
-			 location_lat, location_lon, location_radius_km, location_regions)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 location_lat, location_lon, location_radius_km, location_regions, flood_scope)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.CompanionID, t.Type, t.Template, t.CharLimitBehaviour,
 		encodeList(t.MatchPatterns), encodeList(t.Contacts),
 		t.RetryTimeout, t.MaxRetries, t.PathHashSize, t.Schedule, t.URL, t.FailoverPattern, t.FailoverTimeout,
-		lat, lon, km, regionsCol(t.Regions))
+		lat, lon, km, regionsCol(t.Regions), scopeOrInherit(t.FloodScope))
 	if err != nil {
 		return fmt.Errorf("inserting trigger: %w", err)
 	}
@@ -220,11 +221,11 @@ func (r *TriggerRepo) Update(ctx context.Context, t *Trigger) error {
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE triggers SET type=?, template=?, char_limit_behaviour=?, match_patterns=?, contacts=?,
 			retry_timeout=?, max_retries=?, path_hash_size=?, schedule=?, url=?, failover_pattern=?, failover_timeout=?,
-			location_lat=?, location_lon=?, location_radius_km=?, location_regions=?
+			location_lat=?, location_lon=?, location_radius_km=?, location_regions=?, flood_scope=?
 		WHERE id=?`,
 		t.Type, t.Template, t.CharLimitBehaviour, encodeList(t.MatchPatterns), encodeList(t.Contacts),
 		t.RetryTimeout, t.MaxRetries, t.PathHashSize, t.Schedule, t.URL, t.FailoverPattern, t.FailoverTimeout,
-		lat, lon, km, regionsCol(t.Regions), t.ID); err != nil {
+		lat, lon, km, regionsCol(t.Regions), scopeOrInherit(t.FloodScope), t.ID); err != nil {
 		return fmt.Errorf("updating trigger: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM trigger_channels WHERE trigger_id = ?`, t.ID); err != nil {

@@ -7,6 +7,15 @@ top until tagged.
 
 ### Added
 
+- **Start a private channel.** In Add channel, Private, press Generate for a new key. The dialog
+  shows the key and a QR code to share it; the MeshCore app adds the channel by scanning the code.
+- **See which channels are private.** The Messages list and a channel's header show whether it is
+  the Public channel, a hashtag channel anyone who knows its name can read, or a private channel
+  only those with its key can read.
+- **Change a thread's region from the thread.** The menu in a channel, direct message or room
+  thread has Region, which sets the region that thread's messages are sent in.
+- **Manage a room server from its thread.** A room's thread menu has Manage, which opens the
+  room's management page.
 - **Connections mode on the Map** (contributed by @ModerateWinGuy in #66). Switch the Map from
   Peers to Connections to see the routes packets took to reach you. A line's width shows how often
   a node passes traffic along that hop, its brightness how many packets it carried, and its colour
@@ -20,9 +29,42 @@ top until tagged.
   and adverts heard back after other repeaters relayed them, so they do not count as traffic
   reaching you. Turn on "my packets" to include them. Your repeater's relays heard back are always
   left out.
+- **Send in a region.** List your mesh's regions in Settings and pick a default. A companion,
+  a channel, a contact or a bot can each use its own region, or the same as the level above, so
+  setting your area once covers everything that does not say otherwise. Messages, adverts,
+  logins and replies then reach only the repeaters that carry that region. Messages and packets
+  you receive show the region they were sent in, and the message box shows where the next one
+  will go.
+- **Find the regions around you.** In Settings, Regions, "Discover nearby" asks the repeaters
+  that hear you which regions they carry, then lists each one's answer with a button to add any
+  name you don't have yet. It takes about half a minute. A repeater answers only a few of these
+  every 3 minutes, from anyone, so one may show no answer if it was asked recently.
+- **Regions can sit inside other regions.** In Settings, put a region under another, such as akl
+  under nz, and every region picker shows the tree. One button copies your own repeater's regions
+  in, nested as on your repeater. Nesting only organises the list: a region still reaches only the
+  repeaters that carry that exact region.
+- **Your repeater keeps regions inside other regions.** Put a region under another, such as
+  akl under nz, from the Regions list or with `region put akl nz`, and move it later the same way.
+  The list and the `region` command show the tree. It only organises the list: each region still
+  relays by its own name. `region def` now works as on firmware. The remote console refuses
+  `region load`: over the mesh it leaves a repeater ignoring every later command until it restarts.
+- **Manage a remote repeater's regions.** Log in as admin to a repeater or room server and
+  open Regions to see its regions as a tree, add, move, deny flood or remove one, and pick its
+  home region and the region for its own adverts. Each change is sent at once; press Save to keep
+  them over a reboot, as in the MeshCore app. A node holding more regions than its console can list
+  says some may be missing.
+- **Set your repeater's home region.** The Regions list on the Repeater page now has a home
+  region picker, as `region home` sets.
 
 ### Changed
 
+- **Your own requests, adverts and traces take their turn as they do on firmware.** Logins,
+  commands and requests to a remote node, traces, and your repeater's replies waited behind every
+  relay queued to go out, so on a busy repeater they could time out and look like a node out of
+  reach. Direct requests now go first, as on a firmware node.
+- **Sharing a channel includes its region**, so a phone that scans it sends in the same region.
+  Sharing a room server or repeater now adds it as that kind of contact in the MeshCore app,
+  not as a chat contact.
 - **The packet log keeps the last 7 days instead of the newest 10,000 packets.** Set 1 to 365
   days in Settings, Service. A busy mesh keeps more packets than before, so the database can grow
   larger. Lowering the setting deletes the older packets within the hour, and they cannot be
@@ -31,11 +73,48 @@ top until tagged.
   turn on deny flood for it to stop relaying unscoped traffic. A repeater set up from a config file
   with no `*` now relays unscoped traffic, as a new firmware repeater does. A repeater that had no
   `*` before this update keeps not relaying it, and now shows `*` with deny flood on.
+- **Your repeater's advert region is one of its own regions.** It is now "Region for its own
+  adverts and replies", in the Regions list beside the home region, saves as soon as you pick it,
+  and offers the repeater's regions, as `region default` does on firmware.
+  Picking one allows flood on it, and removing that region sets it back to everywhere. A region set
+  before this update is added to the repeater's list if it was missing.
+- **On your repeater, `#nz` and `nz` are the same region**, as on firmware. Adding, moving, denying
+  flood on, removing or picking either finds the one in the list, and a list that holds both keeps
+  the first and drops the other.
 - **A private region (a name starting with `$`) no longer matches anything**, as on a firmware
   repeater, which needs that region's keys and OwlShack cannot load them.
+- **A region has to be in your Settings list before anything can use it**, and it can't be
+  removed from the list while a companion, channel, contact or bot still sends in it. The
+  message says which ones to change first.
 
 ### Fixed
 
+- **A room server opened from Contacts, Monitoring, the Repeaters list or a message thread shows
+  its posts.** It opened as a repeater page, without Posts stored and Posts pushed.
+- **A message that could not be sent shows as failed.** When the radio's queue was full, a
+  direct message stayed "sending" for good and a channel message looked sent.
+- **The noise floor no longer reads 0 dBm before the radio has measured it.** The Radio page
+  and MQTT leave it out until the first reading, which on a Pi hat takes a few seconds after
+  starting.
+- **A direct message to a contact with no known route is confirmed.** When the reply comes back
+  it shows delivered, and OwlShack learns the route, so the next one goes straight there.
+- **A KISS radio's battery, temperature and noise floor are current.** Each reading showed the one
+  before it, and nothing at all until the second poll after connecting.
+- **Adverts with no name no longer add a contact.** A node that announces itself without a name
+  no longer appears as a blank entry in your contacts and peers.
+- **Monitoring no longer logs you out of a node it can't reach.** When a poll got no answer,
+  monitoring dropped your login before trying a fresh one, so a node out of range or switched off
+  left you logged out of it. Your login now stays until a fresh one succeeds.
+- **Monitoring shows a node as failing when it stops answering, with the status check off.** A
+  node polled only for telemetry or neighbours showed as fine however long it had been silent.
+- **Settings that OwlShack can't use are refused when saved, however they're sent.** A channel
+  with a blank name, a key the MeshCore app can't join, or a rename the Messages page doesn't
+  offer, and a bot with no template or on another companion's channel, were saved if sent
+  straight to OwlShack's API; a long channel key then stopped OwlShack from starting.
+- **Your repeater stops reporting a battery or temperature reading once it has gone out of date**,
+  where it kept sending the last one.
+- **A remote node's page goes back to its login form when OwlShack has lost the login**, after
+  a restart or a logout from another tab, instead of every action failing.
 - **Settings that follow the level above show it.** A companion's or your repeater's path hash
   size, and your repeater's advert scope, showed an empty box when set to inherit or unscoped.
   They now say what they are set to.
