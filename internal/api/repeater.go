@@ -37,8 +37,7 @@ func (s *Server) handleRepeaterLogin(w http.ResponseWriter, r *http.Request) {
 
 	result, err := ops.Login(r.PathValue("pubkey"), body.Password)
 	if err != nil {
-		s.log.Error("repeater login", "error", err)
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeOpError(w, "repeater login", err)
 		return
 	}
 
@@ -81,8 +80,7 @@ func (s *Server) handleRoomLogin(w http.ResponseWriter, r *http.Request) {
 
 	result, err := ops.RoomLogin(pubkey, body.Password, syncSince)
 	if err != nil {
-		s.log.Error("room login", "error", err)
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeOpError(w, "room login", err)
 		return
 	}
 
@@ -97,8 +95,7 @@ func (s *Server) handleRoomStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := ops.RoomStatusReq(r.PathValue("pubkey"))
 	if err != nil {
-		s.log.Error("room status request", "error", err)
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeOpError(w, "room status request", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, res)
@@ -125,7 +122,7 @@ func (s *Server) handleRoomKeepAlive(w http.ResponseWriter, r *http.Request) {
 		since = uint32(*body.Since)
 	}
 	if err := ops.RoomKeepAlive(r.PathValue("pubkey"), since); err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
+		s.writeOpError(w, "room keep-alive", err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -140,8 +137,7 @@ func (s *Server) handleRepeaterStatus(w http.ResponseWriter, r *http.Request) {
 
 	status, err := ops.StatusReq(r.PathValue("pubkey"))
 	if err != nil {
-		s.log.Error("repeater status request", "error", err)
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeOpError(w, "repeater status request", err)
 		return
 	}
 
@@ -169,8 +165,7 @@ func (s *Server) handleRepeaterCLI(w http.ResponseWriter, r *http.Request) {
 
 	response, err := ops.CLI(r.PathValue("pubkey"), body.Command)
 	if err != nil {
-		s.log.Error("repeater cli command", "error", err)
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeOpError(w, "repeater cli command", err)
 		return
 	}
 
@@ -213,8 +208,7 @@ func (s *Server) handleRepeaterPathGet(w http.ResponseWriter, r *http.Request) {
 
 	info, err := ops.PathGet(r.PathValue("pubkey"))
 	if err != nil {
-		s.log.Error("repeater path get", "error", err)
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeOpError(w, "repeater path get", err)
 		return
 	}
 
@@ -229,8 +223,7 @@ func (s *Server) handleRepeaterPathReset(w http.ResponseWriter, r *http.Request)
 	}
 
 	if err := ops.PathReset(r.PathValue("pubkey")); err != nil {
-		s.log.Error("repeater path reset", "error", err)
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeOpError(w, "repeater path reset", err)
 		return
 	}
 
@@ -288,8 +281,7 @@ func (s *Server) handleRepeaterPathSet(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "add the node as a contact first: a path is saved on its contact")
 			return
 		}
-		s.log.Error("repeater path update", "error", err)
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeOpError(w, "repeater path update", err)
 		return
 	}
 
@@ -319,8 +311,7 @@ func (s *Server) handleRepeaterNeighbors(w http.ResponseWriter, r *http.Request)
 
 	res, err := ops.NeighborsReq(r.PathValue("pubkey"), count, offset)
 	if err != nil {
-		s.log.Error("repeater neighbours request", "error", err)
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeOpError(w, "repeater neighbours request", err)
 		return
 	}
 
@@ -336,11 +327,24 @@ func (s *Server) handleRepeaterOwnerInfo(w http.ResponseWriter, r *http.Request)
 
 	res, err := ops.OwnerInfoReq(r.PathValue("pubkey"))
 	if err != nil {
-		s.log.Error("repeater owner info request", "error", err)
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeOpError(w, "repeater owner info request", err)
 		return
 	}
 
+	writeJSON(w, http.StatusOK, res)
+}
+
+func (s *Server) handleRepeaterRegions(w http.ResponseWriter, r *http.Request) {
+	ops, ok := s.repeaterOps(r.PathValue("name"))
+	if !ok {
+		writeError(w, http.StatusNotFound, "companion not found")
+		return
+	}
+	res, err := ops.Regions(r.Context(), r.PathValue("pubkey"))
+	if err != nil {
+		s.writeOpError(w, "repeater regions", err)
+		return
+	}
 	writeJSON(w, http.StatusOK, res)
 }
 
@@ -353,8 +357,7 @@ func (s *Server) handleRepeaterAccessList(w http.ResponseWriter, r *http.Request
 
 	res, err := ops.AccessList(r.PathValue("pubkey"))
 	if err != nil {
-		s.log.Error("repeater access list request", "error", err)
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeOpError(w, "repeater access list request", err)
 		return
 	}
 
@@ -377,8 +380,7 @@ func (s *Server) handleRepeaterAccessSet(w http.ResponseWriter, r *http.Request)
 	}
 
 	if err := ops.SetPerm(r.PathValue("pubkey"), r.PathValue("target"), body.Permissions); err != nil {
-		s.log.Error("repeater access set", "error", err)
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeOpError(w, "repeater access set", err)
 		return
 	}
 
@@ -393,8 +395,7 @@ func (s *Server) handleRepeaterAccessRemove(w http.ResponseWriter, r *http.Reque
 	}
 
 	if err := ops.SetPerm(r.PathValue("pubkey"), r.PathValue("target"), 0); err != nil {
-		s.log.Error("repeater access remove", "error", err)
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeOpError(w, "repeater access remove", err)
 		return
 	}
 
@@ -410,8 +411,7 @@ func (s *Server) handleRepeaterTelemetry(w http.ResponseWriter, r *http.Request)
 
 	res, err := ops.TelemetryReq(r.PathValue("pubkey"))
 	if err != nil {
-		s.log.Error("repeater telemetry request", "error", err)
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeOpError(w, "repeater telemetry request", err)
 		return
 	}
 
@@ -448,8 +448,7 @@ func (s *Server) handleRepeaterSeries(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := ops.SeriesReq(r.PathValue("pubkey"), from, to)
 	if err != nil {
-		s.log.Error("sensor series request", "error", err)
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeOpError(w, "sensor series request", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, res)
@@ -464,8 +463,7 @@ func (s *Server) handleContactTelemetry(w http.ResponseWriter, r *http.Request) 
 
 	res, err := ops.ContactTelemetryReq(r.PathValue("pubkey"))
 	if err != nil {
-		s.log.Error("contact telemetry request", "error", err)
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeOpError(w, "contact telemetry request", err)
 		return
 	}
 

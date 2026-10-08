@@ -137,8 +137,14 @@ func (r *Repeater) statusBody() []byte {
 
 	b := make([]byte, 56)
 	if r.haveDeviceStats.Load() { // real modem readings (poll cache)
-		binary.LittleEndian.PutUint16(b[0:2], uint16(r.batteryMV.Load()))         // batt_milli_volts
-		binary.LittleEndian.PutUint16(b[4:6], uint16(int16(r.noiseFloor.Load()))) // noise_floor (radio getNoiseFloor)
+		if r.haveBattery.Load() {
+			binary.LittleEndian.PutUint16(b[0:2], uint16(r.batteryMV.Load())) // batt_milli_volts
+		}
+		nf := r.noiseFloor.Load()
+		if nf == noNoiseFloor {
+			nf = 0 // the firmware reports 0 until it has sampled
+		}
+		binary.LittleEndian.PutUint16(b[4:6], uint16(int16(nf))) // noise_floor (radio getNoiseFloor)
 	}
 	if r.node != nil {
 		binary.LittleEndian.PutUint16(b[2:4], uint16(r.node.TxQueueLen())) // curr_tx_queue_len

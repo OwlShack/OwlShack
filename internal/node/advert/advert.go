@@ -8,6 +8,8 @@ import (
 
 	meshcore "github.com/OwlShack/meshcore-go"
 	"github.com/OwlShack/meshcore-go/node"
+
+	"github.com/OwlShack/OwlShack/internal/meshpath"
 )
 
 // floodPathLength encodes the path-hash width in BYTES as (size-1) in PathLength's top 2 bits; clamped, a 0 would underflow to 0xC0.
@@ -68,5 +70,5 @@ func SendSelf(n *node.Node, log *slog.Logger, advType, name string, lat, lon *fl
 	}
 	log.Info("sending self-advert", "mode", mode)
 
-	return n.SendPacket(pkt)
+	return meshpath.Send(n, pkt, scope, 0)
 }

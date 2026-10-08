@@ -53,6 +53,7 @@ func (s *Server) handleListPackets(w http.ResponseWriter, r *http.Request) {
 		Summary      string   `json:"summary,omitempty"`
 		SNR          *float64 `json:"snr,omitempty"`
 		RSSI         *int8    `json:"rssi,omitempty"`
+		FloodScope   string   `json:"floodScope,omitempty"`
 	}
 
 	out := make([]packetJSON, 0, len(packets))
@@ -76,6 +77,9 @@ func (s *Server) handleListPackets(w http.ResponseWriter, r *http.Request) {
 			j.Hops = &phc
 			j.PacketHash, j.Path = store.PacketFieldsFromPkt(pkt)
 			j.Summary = PacketSummary(pkt, s.ChannelLookup())
+			if b := s.backendRef(); b != nil {
+				j.FloodScope = b.FloodScopeOf(pkt)
+			}
 		}
 
 		out = append(out, j)

@@ -7,6 +7,8 @@ interface ApiObject<T> {
   setItem: Dispatch<SetStateAction<T | null>>;
   loading: boolean;
   error: string | null;
+  /** The last load answered 404, as against failing some other way. */
+  notFound: boolean;
   reload: () => void;
 }
 
@@ -18,6 +20,7 @@ export function useApiObject<T>(
   const [item, setItem] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [notFound, setNotFound] = useState(false);
 
   const seq = useRef(0);
   const reload = useCallback(() => {
@@ -25,8 +28,10 @@ export function useApiObject<T>(
     const id = ++seq.current;
     setLoading(true);
     setError(null);
+    setNotFound(false);
     fetch(url)
       .then((r) => {
+        if (r.status === 404 && seq.current === id) setNotFound(true);
         if (!r.ok) throw new Error(errorMessage);
         return r.json();
       })
@@ -48,5 +53,5 @@ export function useApiObject<T>(
     };
   }, [reload]);
 
-  return { item, setItem, loading, error, reload };
+  return { item, setItem, loading, error, notFound, reload };
 }

@@ -30,6 +30,7 @@ import { PeerAvatar } from "@/components/PeerAvatar";
 import { PeerTypePill } from "@/components/StatusIndicator";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { isPeerDelete } from "@/lib/peerWs";
+import { contactDetailPath } from "@/lib/routes";
 import { timeAgo, truncateMid } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -305,7 +306,7 @@ function RepeaterRow({
   return (
     <div className="group flex items-center gap-2 sm:gap-4 px-3 sm:px-4 py-3 hover:bg-muted/40 transition-colors">
       <Link
-        to={`/companions/${encodeURIComponent(companion)}/repeaters/${contact.peerPubkey}`}
+        to={contactDetailPath(companion, contact.peerPubkey, ["ROOM", "SENSOR"].includes(contact.type?.toUpperCase()) ? contact.type : "REPEATER")}
         className="flex items-center gap-3 flex-1 min-w-0"
       >
         <PeerAvatar name={contact.name || contact.peerPubkey} size="md" />

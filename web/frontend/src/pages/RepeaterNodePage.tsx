@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -49,7 +49,6 @@ import {
 } from "@/components/ui/select";
 import { Field, TextField, SelectField, SwitchRow, PATH_HASH_SIZE_OPTIONS } from "@/components/ConfigFields";
 import { PositionPicker, round6 } from "@/components/PositionPicker";
-import { Switch } from "@/components/ui/switch";
 import { InlineConfirm } from "@/components/InlineConfirm";
 import { Button } from "@/components/ui/button";
 import { HeaderButton } from "@/components/HeaderButton";
@@ -71,10 +70,15 @@ import { usePeerDetailSheet } from "@/hooks/usePeerDetailSheet";
 import {
   configApi,
   type ConfigRepeater,
+  type FloodScope,
   type RepeaterNodeNeighbor,
   type RepeaterNodeStats,
   type RepeaterAclEntry,
+  type RepeaterRegion,
 } from "@/lib/configApi";
+import { regionName } from "@/components/RegionSelect";
+import { NESTING_HINT } from "@/components/RegionTree";
+import { RegionListEditor } from "@/components/RegionListEditor";
 import { formatBattery, formatSecsAgo, formatUptime, truncateMid } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -736,9 +740,12 @@ function AccessTab({
 function SettingsTab({ rep, reload }: { rep: ConfigRepeater; reload: () => void }) {
   const [saving, setSaving] = useState<"node" | "relay" | "admin" | null>(null);
   const [busyDelete, setBusyDelete] = useState(false);
-  const [regionBusy, setRegionBusy] = useState<string | null>(null);
+  const [regionBusy, setRegionBusy] = useState(false);
+  const regionBusyRef = useRef(false);
+  // The region list is edited in place and saved per change, so a change never reloads the page and resets the unsaved fields above.
+  const [stored, setStored] = useState<RepeaterRegion[]>(rep.regions ?? []);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [confirmRegion, setConfirmRegion] = useState<string | null>(null);
+  const [home, setHome] = useState(rep.homeRegion);
 
   const [name, setName] = useState("");
   const [privateKey, setPrivateKey] = useState("");
@@ -750,19 +757,20 @@ function SettingsTab({ rep, reload }: { rep: ConfigRepeater; reload: () => void 
   const [floodMaxUnscoped, setFloodMaxUnscoped] = useState("");
   const [floodMaxAdvert, setFloodMaxAdvert] = useState("");
   const [loopDetect, setLoopDetect] = useState("off");
-  const [defaultRegion, setDefaultRegion] = useState("");
+  const [floodScope, setFloodScope] = useState<FloodScope>(rep.floodScope);
   const [pathHashSize, setPathHashSize] = useState("");
   const [txDelay, setTxDelay] = useState("");
   const [directTxDelay, setDirectTxDelay] = useState("");
   const [rxDelay, setRxDelay] = useState("");
   const [multiAcks, setMultiAcks] = useState("");
   const [disableFwd, setDisableFwd] = useState(false);
-  const [newRegion, setNewRegion] = useState("");
   const [ownerInfo, setOwnerInfo] = useState("");
   const [adminPw, setAdminPw] = useState({ value: "", dirty: false });
   const [guestPw, setGuestPw] = useState({ value: "", dirty: false });
 
   useEffect(() => {
+    setStored(rep.regions ?? []);
+    setHome(rep.homeRegion);
     setName(rep.name);
     setLat(rep.latitude != null ? String(rep.latitude) : "");
     setLon(rep.longitude != null ? String(rep.longitude) : "");
@@ -772,14 +780,13 @@ function SettingsTab({ rep, reload }: { rep: ConfigRepeater; reload: () => void 
     setFloodMaxUnscoped(rep.floodMaxUnscoped != null ? String(rep.floodMaxUnscoped) : "");
     setFloodMaxAdvert(rep.floodMaxAdvert != null ? String(rep.floodMaxAdvert) : "");
     setLoopDetect(rep.loopDetect ?? "off");
-    setDefaultRegion(rep.defaultRegion ?? "");
+    setFloodScope(rep.floodScope);
     setPathHashSize(rep.pathHashSize != null ? String(rep.pathHashSize) : "");
     setTxDelay(rep.txDelayFactor != null ? String(rep.txDelayFactor) : "");
     setDirectTxDelay(rep.directTxDelayFactor != null ? String(rep.directTxDelayFactor) : "");
     setRxDelay(rep.rxDelayBase != null ? String(rep.rxDelayBase) : "");
     setMultiAcks(rep.multiAcks != null ? String(rep.multiAcks) : "");
     setDisableFwd(rep.disableFwd ?? false);
-    setNewRegion("");
     setOwnerInfo(rep.ownerInfo);
     setPrivateKey("");
     setAdminPw({ value: "", dirty: false });
@@ -846,7 +853,6 @@ function SettingsTab({ rep, reload }: { rep: ConfigRepeater; reload: () => void 
           directTxDelayFactor: num(directTxDelay),
           rxDelayBase: num(rxDelay),
           multiAcks: num(multiAcks),
-          defaultRegion,
           advertInterval: toSecs(advertInterval, 60),
           floodAdvertInterval: toSecs(floodAdvertInterval, 3600),
         }),
@@ -879,29 +885,46 @@ function SettingsTab({ rep, reload }: { rep: ConfigRepeater; reload: () => void 
     }
   };
 
-  const regionOp = async (rn: string, fn: () => Promise<unknown>, ok?: string) => {
-    setRegionBusy(rn);
+  // regionOp shows the change at once and runs one at a time; a refusal re-reads the list, as a snapshot would undo any later change already saved.
+  const regionOp = async (next: RepeaterRegion[], fn: () => Promise<unknown>, ok?: string) => {
+    if (regionBusyRef.current) return false;
+    regionBusyRef.current = true;
+    setRegionBusy(true);
+    setStored(next);
     try {
       await fn();
       if (ok) toast.success(ok);
-      reload();
+      return true;
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Region update failed");
+      try {
+        const r = await fetch("/api/config/repeater");
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const fresh = (await r.json()) as ConfigRepeater;
+        setStored(fresh.regions ?? []);
+        setHome(fresh.homeRegion);
+        setFloodScope(fresh.floodScope);
+      } catch {
+        toast.error("Could not reload the region list; refresh the page");
+      }
+      return false;
     } finally {
-      setRegionBusy(null);
+      regionBusyRef.current = false;
+      setRegionBusy(false);
     }
   };
+  const withRegion = (name: string, change: Partial<RepeaterRegion>) =>
+    regions.map((r) => (r.name === name ? { ...r, ...change } : r));
 
   // "*" always exists on firmware and allows flood until denied, so a config with no entry still shows it.
-  const stored = rep.regions ?? [];
   const regions = stored.some((rg) => rg.name === "*")
     ? stored
-    : [{ name: "*", denyFlood: false }, ...stored];
-  const addRegion = () => {
-    const rn = newRegion.trim();
-    if (rn === "" || regions.some((r) => r.name === rn)) return;
-    regionOp(rn, () => configApi.addRepeaterRegion(rn, false), "Region added");
-  };
+    : [{ name: "*", parent: "", denyFlood: false }, ...stored];
+  // The firmware's default is one of its own regions; "#akl" keys as akl, and a "$" region has no key here.
+  const bare = (n: string) => n.replace(/^#/, "");
+  const defaultRegionChoices = regions
+    .filter((r) => r.name !== "*" && !r.name.startsWith("$"))
+    .map((r) => ({ name: bare(r.name), parent: r.parent === "*" ? "*" : bare(r.parent) }));
 
   return (
     <div className="space-y-8">
@@ -1042,18 +1065,6 @@ function SettingsTab({ rep, reload }: { rep: ConfigRepeater; reload: () => void 
               placeholder="0"
               hint="extra copies of relayed ACKs · firmware multi.acks"
             />
-            <SelectField
-              label="Advert scope"
-              value={defaultRegion}
-              options={[
-                { value: "", label: "(unscoped)" },
-                ...regions
-                  .filter((rg) => rg.name !== "*" && !rg.denyFlood)
-                  .map((rg) => ({ value: rg.name, label: rg.name })),
-              ]}
-              onChange={setDefaultRegion}
-              hint="region our flood adverts are scoped to"
-            />
           </div>
           <SectionSave busy={saving === "relay"} disabled={saving !== null} onClick={saveRelay} />
         </div>
@@ -1069,76 +1080,47 @@ function SettingsTab({ rep, reload }: { rep: ConfigRepeater; reload: () => void 
             region name, as on firmware). The{" "}
             <span className="text-foreground">*</span> scope is plain unscoped
             flood. It is always there; deny flood on it to stop relaying
-            unscoped traffic.
+            unscoped traffic. {NESTING_HINT}
           </p>
-          {regions.length > 0 && (
-            <div className="divide-y divide-border border border-border">
-              {regions.map((rg) => (
-                <div key={rg.name} className="flex items-center justify-between gap-3 px-3 py-2">
-                  <span className="truncate font-mono text-sm">{rg.name}</span>
-                  <div className="flex items-center gap-4">
-                    {regionBusy === rg.name && (
-                      <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
-                    )}
-                    <label className="flex cursor-pointer items-center gap-2 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
-                      deny flood
-                      <Switch
-                        checked={rg.denyFlood}
-                        disabled={regionBusy !== null}
-                        onCheckedChange={() =>
-                          regionOp(rg.name, () =>
-                            configApi.setRepeaterRegionFlood(rg.name, !rg.denyFlood),
-                          )
-                        }
-                      />
-                    </label>
-                    {rg.name !== "*" && (
-                      <InlineConfirm
-                        confirming={confirmRegion === rg.name}
-                        onAskRemove={() => setConfirmRegion(rg.name)}
-                        onCancel={() => setConfirmRegion(null)}
-                        onConfirm={() => {
-                          regionOp(
-                            rg.name,
-                            () => configApi.removeRepeaterRegion(rg.name),
-                            "Region removed",
-                          );
-                          setConfirmRegion(null);
-                        }}
-                        iconOnly
-                        ariaLabel={`remove region ${rg.name}`}
-                      />
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-          <div className="flex items-end gap-2">
-            <div className="flex-1">
-              <TextField
-                label="Add region"
-                value={newRegion}
-                onChange={setNewRegion}
-                placeholder="region name"
-                hint="the transport key derives from this name"
-              />
-            </div>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={addRegion}
-              disabled={newRegion.trim() === "" || regionBusy !== null}
-              className="rounded-none font-mono text-[11px] uppercase tracking-[0.12em]"
-            >
-              {regionBusy === newRegion.trim() ? (
-                <Loader2 className="size-3.5 animate-spin" />
-              ) : (
-                <Plus className="size-3.5" />
-              )}
-              add
-            </Button>
-          </div>
+          <RegionListEditor
+            regions={regions}
+            home={home}
+            busy={regionBusy}
+            scope={{
+              value: floodScope,
+              choices: defaultRegionChoices,
+              onChange: (v) => {
+                setFloodScope(v);
+                const name = regionName(v);
+                const picked = regions.find((r) => bare(r.name) === name)?.name;
+                return void regionOp(picked ? withRegion(picked, { denyFlood: false }) : regions, () => configApi.setRepeaterScope(v));
+              },
+              hint: "its flood adverts, and replies it can't scope to the request; picking one allows flood on it · firmware region default",
+            }}
+            onHome={(h) => {
+              setHome(h);
+              return regionOp(regions, () => configApi.setRepeaterHome(h));
+            }}
+            onMove={(name, parent) =>
+              regionOp(withRegion(name, { parent }), () => configApi.moveRepeaterRegion(name, parent), "Region moved")
+            }
+            onDeny={(name, deny) =>
+              regionOp(withRegion(name, { denyFlood: deny }), () => configApi.setRepeaterRegionFlood(name, deny))
+            }
+            onRemove={async (name) => {
+              const ok = await regionOp(
+                regions.filter((r) => r.name !== name),
+                () => configApi.removeRepeaterRegion(name),
+                "Region removed",
+              );
+              if (ok && regionName(floodScope) === bare(name)) setFloodScope("everywhere"); // the server cleared these too
+              if (ok && home === name) setHome("*");
+              return ok;
+            }}
+            onAdd={(name, parent) =>
+              regionOp([...regions, { name, parent, denyFlood: false }], () => configApi.addRepeaterRegion(name, parent, false), "Region added")
+            }
+          />
         </div>
       </section>
 

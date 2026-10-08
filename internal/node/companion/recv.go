@@ -15,6 +15,7 @@ import (
 	meshcore "github.com/OwlShack/meshcore-go"
 	"github.com/OwlShack/meshcore-go/node"
 
+	"github.com/OwlShack/OwlShack/internal/config"
 	"github.com/OwlShack/OwlShack/internal/echo"
 	"github.com/OwlShack/OwlShack/internal/meshpath"
 	"github.com/OwlShack/OwlShack/internal/store"
@@ -31,7 +32,7 @@ func (c *Companion) sendDMAck(pkt *meshcore.Packet, senderPubKey []byte, sharedS
 			c.log.Debug("failed to build path return for DM ACK", "error", err)
 			return
 		}
-		if err := c.node.SendPacketDelayed(pathReturn, node.PriorityFloodRelay, dmAckDelay); err != nil {
+		if err := meshpath.Send(c.node, pathReturn, c.contactScope(senderPubKey).MeshRegion(), dmAckDelay); err != nil {
 			c.log.Debug("failed to send DM ACK (path return)", "error", err)
 		}
 	} else {
@@ -52,7 +53,7 @@ func (c *Companion) sendDMAck(pkt *meshcore.Packet, senderPubKey []byte, sharedS
 			ackPkt.PathLength = meshcore.MakePathLen(hs, uint8(len(outPath)/int(hs)))
 		}
 
-		if err := c.node.SendPacketDelayed(ackPkt, node.PriorityFloodRelay, dmAckDelay); err != nil {
+		if err := meshpath.Send(c.node, ackPkt, c.contactScope(senderPubKey).MeshRegion(), dmAckDelay); err != nil {
 			c.log.Debug("failed to send DM ACK", "error", err)
 		}
 	}
@@ -64,6 +65,31 @@ func (c *Companion) bytesPerHop(pubkey []byte) uint8 {
 		return ct.PathHashSize
 	}
 	return c.pathHashSize()
+}
+
+// contactScope is the region floods to a node go in: its contact's, else the companion's own.
+func (c *Companion) contactScope(pubkey []byte) config.FloodScope {
+	if ct, err := c.store.Contacts.Get(c.runCtx, c.cfg.ID, pubkey); err == nil && ct != nil {
+		return config.ResolveScope(config.FloodScope(ct.FloodScope), c.cfg.FloodScope)
+	}
+	return c.cfg.FloodScope
+}
+
+// contactScopeHex is contactScope for a hex pubkey; a bad one gets the companion's own, and the send then fails on it.
+func (c *Companion) contactScopeHex(pubkeyHex string) config.FloodScope {
+	pubkey, err := hex.DecodeString(pubkeyHex)
+	if err != nil {
+		return c.cfg.FloodScope
+	}
+	return c.contactScope(pubkey)
+}
+
+// channelScope is the region a channel's posts go in: its own, else the companion's.
+func (c *Companion) channelScope(name string) config.FloodScope {
+	c.chanScopesMu.Lock()
+	own := c.chanScopes[name]
+	c.chanScopesMu.Unlock()
+	return config.ResolveScope(own, c.cfg.FloodScope)
 }
 
 // bytesPerHopHex is bytesPerHop for a hex pubkey; a bad one gets the companion's own, and the send then fails on it.
@@ -81,8 +107,9 @@ func (c *Companion) buildPathReturn(destPubKey []byte, sharedSecret []byte, inPa
 	if err != nil {
 		return nil, err
 	}
-	// Flooded at this companion's hash size, as the firmware's sendFloodScoped does.
+	// Flooded at this companion's hash size and in the contact's region, as the firmware's sendFloodScoped does.
 	pkt.PathLength = meshcore.MakePathLen(c.pathHashSize(), 0)
+	pkt.SetScope(c.contactScope(destPubKey).MeshRegion())
 	return pkt, nil
 }
 
@@ -137,6 +164,7 @@ func (c *Companion) handleRoomPush(pkt *meshcore.Packet, roomPubKey []byte, room
 		Direction:   "rx",
 		Timestamp:   time.Unix(int64(postTs), 0),
 		ReceivedAt:  time.Now(),
+		FloodScope:  c.floodScopeOf(pkt),
 	}
 	if pkt.HasSignalInfo {
 		snr := float64(pkt.SNR)
@@ -328,6 +356,7 @@ func (c *Companion) registerPacketHandlers() {
 			PathHashes:   pkt.Path,
 			PathHashSize: &pathHashSize,
 			Hops:         &hops,
+			FloodScope:   c.floodScopeOf(pkt),
 		}
 
 		convoID := "channel:" + ch.Name
@@ -367,6 +396,7 @@ func (c *Companion) registerPacketHandlers() {
 					"timestamp":    msg.Timestamp.UTC().Format(time.RFC3339),
 					"receivedAt":   msg.ReceivedAt.UTC().Format(time.RFC3339),
 					"id":           msg.ID,
+					"floodScope":   msg.FloodScope,
 					"hops":         hops,
 					"pathHashSize": pathHashSize,
 				}
@@ -455,14 +485,7 @@ func (c *Companion) registerPacketHandlers() {
 		case meshcore.TxtTypeCLIData:
 			var senderKey [32]byte
 			copy(senderKey[:], senderPubKey)
-			c.repeaters.HandleCLIResponse(senderKey, text)
-			if pkt.IsRouteFlood() { // firmware: teach the sender our path (no ACK as extra)
-				if pr, err := c.buildPathReturn(senderPubKey, sharedSecret, pkt.Path, pkt.PathLength, 0, nil); err == nil {
-					if err := c.node.SendPacketDelayed(pr, node.PriorityFloodRelay, 0); err != nil {
-						c.log.Debug("failed to send CLI path return", "error", err)
-					}
-				}
-			}
+			c.repeaters.HandleCLIResponse(senderKey, text) // firmware sends no ACK or path return for a CLI reply
 			return
 		case meshcore.TxtTypeSignedPlain:
 			c.handleRoomPush(pkt, senderPubKey, senderPubKeyHex, sharedSecret, plaintext)
@@ -522,6 +545,7 @@ func (c *Companion) registerPacketHandlers() {
 			PathHashes:   pkt.Path,
 			PathHashSize: sizePtr,
 			Hops:         hopsPtr,
+			FloodScope:   c.floodScopeOf(pkt),
 		}
 		if pkt.HasSignalInfo {
 			snr := float64(pkt.SNR)
@@ -548,6 +572,7 @@ func (c *Companion) registerPacketHandlers() {
 					"timestamp":   msg.Timestamp.UTC().Format(time.RFC3339),
 					"receivedAt":  msg.ReceivedAt.UTC().Format(time.RFC3339),
 					"id":          msg.ID,
+					"floodScope":  msg.FloodScope,
 				}
 				if hopsPtr != nil {
 					wsMsg["hops"] = *hopsPtr
@@ -798,7 +823,7 @@ func (c *Companion) sendReciprocalPathReturn(peerPubKey, secret []byte, pkt *mes
 		return
 	}
 	meshpath.Direct(rpath, learnedPath, hashSize)
-	if err := c.node.SendPacketDelayed(rpath, node.PriorityFloodRelay, reciprocalPathDelay); err != nil {
+	if err := meshpath.Send(c.node, rpath, nil, reciprocalPathDelay); err != nil {
 		c.log.Debug("failed to send reciprocal path return", "error", err)
 		return
 	}

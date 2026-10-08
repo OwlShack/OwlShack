@@ -2,9 +2,12 @@ package repeater
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
+	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -377,18 +380,18 @@ func TestRegionDefaultCLI(t *testing.T) {
 	defer cancel()
 	r.runCtx = ctx
 
-	await := func(region string, nRegions int) {
+	await := func(region config.FloodScope, nRegions int) {
 		t.Helper()
 		deadline := time.Now().Add(3 * time.Second)
 		for time.Now().Before(deadline) {
-			if cfg := r.cfgSnapshot(); cfg.DefaultRegion == region && len(cfg.Regions) == nRegions {
+			if cfg := r.cfgSnapshot(); cfg.FloodScope == region && len(cfg.Regions) == nRegions {
 				return
 			}
 			time.Sleep(5 * time.Millisecond)
 		}
 		cfg := r.cfgSnapshot()
 		t.Fatalf("cfg never became {region=%q nRegions=%d}; have region=%q regions=%+v",
-			region, nRegions, cfg.DefaultRegion, cfg.Regions)
+			region, nRegions, cfg.FloodScope, cfg.Regions)
 	}
 
 	if got := r.runCLI("region default"); got != " default scope is <null>" {
@@ -397,7 +400,7 @@ func TestRegionDefaultCLI(t *testing.T) {
 	if got := r.runCLI("region default alpha"); got != " default scope is now alpha" {
 		t.Fatalf("set = %q", got)
 	}
-	await("alpha", 1)
+	await("region:alpha", 1)
 	if rg := r.cfgSnapshot().Regions[0]; rg.Name != "alpha" || rg.DenyFlood {
 		t.Fatalf("auto-created region wrong: %+v", rg)
 	}
@@ -407,7 +410,7 @@ func TestRegionDefaultCLI(t *testing.T) {
 	if got := r.runCLI("region default <null>"); got != " default scope is now <null>" {
 		t.Fatalf("clear = %q", got)
 	}
-	await("", 1) // clearing keeps the region itself
+	await(config.ScopeEverywhere, 1) // clearing keeps the region itself
 }
 
 // Pins the firmware asymmetry: a revoke accepts a pubkey prefix, a grant does not.
@@ -482,7 +485,7 @@ func TestRegionTree(t *testing.T) {
 	r := &Repeater{cfg: config.RepeaterConfig{
 		HomeRegion: "alpha",
 		Regions: []config.RepeaterRegion{
-			{Name: "*"}, {Name: "alpha"}, {Name: "bravo", DenyFlood: true},
+			{Name: "*"}, {Name: "alpha", Parent: "*"}, {Name: "bravo", Parent: "*", DenyFlood: true},
 		},
 	}}
 	want := "* F\n alpha^ F\n bravo\n"
@@ -490,7 +493,7 @@ func TestRegionTree(t *testing.T) {
 		t.Errorf("region tree = %q, want %q", got, want)
 	}
 
-	r.cfg.Regions = []config.RepeaterRegion{{Name: "alpha"}} // no "*" ⇒ the wildcard allows, printed "* F" as printChildRegions does
+	r.cfg.Regions = []config.RepeaterRegion{{Name: "alpha", Parent: "*"}} // no "*" ⇒ the wildcard allows, printed "* F" as printChildRegions does
 	if got := r.runCLI("region"); got != "* F\n alpha^ F\n" {
 		t.Errorf("region tree without wildcard = %q", got)
 	}
@@ -498,7 +501,7 @@ func TestRegionTree(t *testing.T) {
 
 func TestRegionGetHomeSaveLoad(t *testing.T) {
 	r := &Repeater{cfg: config.RepeaterConfig{Regions: []config.RepeaterRegion{
-		{Name: "alpha"}, {Name: "bravo", DenyFlood: true},
+		{Name: "alpha", Parent: "*"}, {Name: "bravo", Parent: "*", DenyFlood: true},
 	}}}
 	r.reconfigure = testReconfigure(r)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -516,9 +519,6 @@ func TestRegionGetHomeSaveLoad(t *testing.T) {
 	}
 	if got := r.runCLI("region save"); got != "OK" {
 		t.Errorf("save = %q", got)
-	}
-	if got := r.runCLI("region load"); got != "" {
-		t.Errorf("load = %q, want empty (firmware replies nothing)", got)
 	}
 	if got := r.runCLI("region home"); got != " home is *" {
 		t.Errorf("home read = %q", got)
@@ -538,11 +538,11 @@ func TestRegionGetHomeSaveLoad(t *testing.T) {
 	}
 }
 
-// A dangling defaultRegion/homeRegion fails Config.Validate and would break the reload after the reply.
-func TestRegionRemoveClearsRefs(t *testing.T) {
+// Removing the home or default region clears it, as the firmware's home_id and default_id then find nothing.
+func TestRegionRemoveClearsHomeAndScope(t *testing.T) {
 	r := &Repeater{cfg: config.RepeaterConfig{
-		DefaultRegion: "alpha", HomeRegion: "alpha",
-		Regions: []config.RepeaterRegion{{Name: "alpha"}},
+		FloodScope: "region:alpha", HomeRegion: "alpha",
+		Regions: []config.RepeaterRegion{{Name: "alpha", Parent: "*"}},
 	}}
 	r.reconfigure = testReconfigure(r)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -556,8 +556,8 @@ func TestRegionRemoveClearsRefs(t *testing.T) {
 	for len(r.cfgSnapshot().Regions) != 0 && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
-	if cfg := r.cfgSnapshot(); cfg.DefaultRegion != "" || cfg.HomeRegion != "" {
-		t.Errorf("dangling refs left: default=%q home=%q", cfg.DefaultRegion, cfg.HomeRegion)
+	if cfg := r.cfgSnapshot(); cfg.FloodScope != config.ScopeEverywhere || cfg.HomeRegion != "" {
+		t.Errorf("after remove: scope=%q home=%q, want everywhere and none", cfg.FloodScope, cfg.HomeRegion)
 	}
 }
 
@@ -769,10 +769,24 @@ func TestNeighborsListCap(t *testing.T) {
 
 // testReconfigure stands in for the app's persist+reload hook, mutating r.cfg under the config lock.
 func testReconfigure(r *Repeater) func(func(*config.RepeaterConfig)) error {
+	if r.log == nil {
+		r.log = slog.New(slog.DiscardHandler) // a refused change is logged, as in production
+	}
 	return func(m func(*config.RepeaterConfig)) error {
 		r.mu.Lock()
 		defer r.mu.Unlock()
-		m(&r.cfg)
+		c := r.cfg // like the app, mutate a copy rebuilt from storage, never the running slice
+		c.Regions = slices.Clone(c.Regions)
+		m(&c)
+		// Validate as repeaterReconfigurer does, filling what these test configs leave out.
+		v := c
+		v.Name, v.AdminPassword = cmp.Or(v.Name, "rp"), cmp.Or(v.AdminPassword, "pw")
+		full := config.DefaultConfig()
+		full.Repeater = &v
+		if err := full.Validate(); err != nil {
+			return err
+		}
+		r.cfg = c
 		return nil
 	}
 }

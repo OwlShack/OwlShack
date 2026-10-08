@@ -13,10 +13,43 @@ import { LoadErrorAlert } from "@/components/LoadErrorAlert";
 import { PageHeader } from "@/components/PageHeader";
 import { AddChannelDialog, type Channel } from "@/components/AddChannelDialog";
 import { postChannel } from "@/lib/channelsApi";
+import { configApi, type ConfigChannel, type ConfigCompanion, type FloodScope } from "@/lib/configApi";
+import { RegionSelect, regionName, resolveScope, useRegionSettings } from "@/components/RegionSelect";
 
 export function ChannelsPage() {
   const { ref } = useParams();
-  const { ref: companion, name: companionName } = useCompanionRef(ref);
+  const { ref: companion, id: companionId, name: companionName } = useCompanionRef(ref);
+  const regionSettings = useRegionSettings();
+  const { items: configCompanions } = useApiList<ConfigCompanion>(
+    "/api/config/companions",
+    "Failed to load companions",
+  );
+  // The runtime list has names only; ids and regions live on the config rows.
+  const { items: configChannels, reload: reloadConfigChannels } = useApiList<ConfigChannel>(
+    companionId != null ? `/api/config/companions/${companionId}/channels` : null,
+    "Failed to load channel regions",
+  );
+  const companionScope = resolveScope(
+    configCompanions?.find((c) => c.id === companionId)?.floodScope,
+    regionSettings.scope,
+  );
+  const [savingRegion, setSavingRegion] = useState<string | null>(null);
+
+  const setChannelScope = useCallback(
+    async (row: ConfigChannel, floodScope: FloodScope) => {
+      setSavingRegion(row.name);
+      try {
+        await configApi.saveChannel(row.id, { name: row.name, floodScope });
+        toast.success(`${row.name} region saved`);
+        reloadConfigChannels();
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Failed to save the region");
+      } finally {
+        setSavingRegion(null);
+      }
+    },
+    [reloadConfigChannels],
+  );
 
   const {
     items: channels,
@@ -39,12 +72,13 @@ export function ChannelsPage() {
         toast.success(`Channel "${channelName}" added`);
         setDialogOpen(false);
         load();
+        reloadConfigChannels(); // the new row's region picker reads the config list
       } catch (e) {
         const msg = e instanceof Error ? e.message : "failed";
         toast.error(`Failed to add channel: ${msg}`);
       }
     },
-    [companion, load],
+    [companion, load, reloadConfigChannels],
   );
 
   const removeChannel = useCallback(
@@ -136,16 +170,30 @@ export function ChannelsPage() {
             </div>
           ) : (
             <div className="divide-y divide-border">
-              {channels.map((ch) => (
-                <ChannelRow
-                  key={ch.name}
-                  name={ch.name}
-                  confirming={confirmRemove === ch.name}
-                  onAskRemove={() => setConfirmRemove(ch.name)}
-                  onCancel={() => setConfirmRemove(null)}
-                  onConfirm={() => removeChannel(ch.name)}
-                />
-              ))}
+              {channels.map((ch) => {
+                const row = configChannels?.find((c) => c.name === ch.name);
+                return (
+                  <ChannelRow
+                    key={ch.name}
+                    name={ch.name}
+                    region={
+                      row && (
+                        <RegionSelect
+                          value={row.floodScope}
+                          onChange={(s) => setChannelScope(row, s)}
+                          regions={regionSettings.regions}
+                          inherit={{ from: "companion", resolved: companionScope }}
+                          disabled={savingRegion !== null}
+                        />
+                      )
+                    }
+                    confirming={confirmRemove === ch.name}
+                    onAskRemove={() => setConfirmRemove(ch.name)}
+                    onCancel={() => setConfirmRemove(null)}
+                    onConfirm={() => removeChannel(ch.name)}
+                  />
+                );
+              })}
             </div>
           )}
         </section>
@@ -156,6 +204,7 @@ export function ChannelsPage() {
         onOpenChange={setDialogOpen}
         existing={channels || []}
         onAdd={addChannel}
+        region={regionName(companionScope)}
       />
     </div>
   );
@@ -163,19 +212,21 @@ export function ChannelsPage() {
 
 function ChannelRow({
   name,
+  region,
   confirming,
   onAskRemove,
   onCancel,
   onConfirm,
 }: {
   name: string;
+  region: React.ReactNode;
   confirming: boolean;
   onAskRemove: () => void;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
   return (
-    <div className="flex items-center gap-3 px-4 py-3 hover:bg-muted/40 transition-colors">
+    <div className="flex flex-wrap items-center gap-3 px-4 py-3 hover:bg-muted/40 transition-colors">
       <div className="size-9 grid place-items-center rounded-sm border border-border bg-muted/40 text-muted-foreground shrink-0">
         <Hash className="size-4" strokeWidth={1.6} />
       </div>
@@ -186,6 +237,8 @@ function ChannelRow({
         </span>
         <span className="text-mono-xs text-muted-foreground">channel</span>
       </div>
+
+      {region && <div className="order-last w-full sm:order-none sm:w-56">{region}</div>}
 
       <div className="shrink-0">
         <InlineConfirm

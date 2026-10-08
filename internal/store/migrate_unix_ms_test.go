@@ -113,7 +113,7 @@ func TestTimeColumnsHoldUnixMS(t *testing.T) {
 	if err := st.Contacts.Restore(ctx, &Contact{CompanionID: 1, PeerPubKey: []byte{0xbb}, Name: "r", LastSeen: at, AddedAt: at}); err != nil {
 		t.Fatal(err)
 	}
-	m := &Message{CompanionID: 1, Channel: "Public", Direction: "rx", Timestamp: at, ReceivedAt: at}
+	m := &Message{FloodScope: "everywhere", CompanionID: 1, Channel: "Public", Direction: "rx", Timestamp: at, ReceivedAt: at}
 	if err := st.Messages.Insert(ctx, m); err != nil {
 		t.Fatal(err)
 	}

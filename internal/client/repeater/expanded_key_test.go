@@ -48,7 +48,7 @@ func TestExpandedKey_RequestsDecryptAtTheRepeater(t *testing.T) {
 	n := node.New(self, radio)
 	t.Cleanup(n.Stop)
 	n.Peers().Insert(&node.Peer{Identity: repeater.Identity, Name: "OldWestRPT0"})
-	rm := NewClient(n, st, 0, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, func() uint8 { return 1 })
+	rm := NewClient(n, st, 0, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, func() uint8 { return 1 }, func([]byte) *meshcore.Region { return nil })
 	pk := hex.EncodeToString(repeater.PublicKeyBytes())
 
 	secret, err := repeater.SharedSecret(self.Identity)

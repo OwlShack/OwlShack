@@ -13,6 +13,7 @@ import (
 	meshcore "github.com/OwlShack/meshcore-go"
 	"github.com/OwlShack/meshcore-go/node"
 
+	"github.com/OwlShack/OwlShack/internal/meshpath"
 	"github.com/OwlShack/OwlShack/internal/store"
 )
 
@@ -81,6 +82,8 @@ type Client struct {
 	stats       airtimeEstimator
 	// ownHashSize is the companion's bytes per hop, for a node that is not a contact; required.
 	ownHashSize func() uint8
+	// scopeFor is the region floods to a node go in; required, and nil from it sends unscoped.
+	scopeFor func(pubkey []byte) *meshcore.Region
 
 	mu       sync.Mutex
 	sessions map[string]*Session
@@ -110,9 +113,10 @@ func (rm *Client) UniqueTimestamp() uint32 {
 	return ts
 }
 
-func NewClient(n *node.Node, st *store.Store, companionID int64, log *slog.Logger, stats airtimeEstimator, ownHashSize func() uint8) *Client {
+func NewClient(n *node.Node, st *store.Store, companionID int64, log *slog.Logger, stats airtimeEstimator, ownHashSize func() uint8, scopeFor func(pubkey []byte) *meshcore.Region) *Client {
 	return &Client{
 		ownHashSize: ownHashSize,
+		scopeFor:    scopeFor,
 		node:        n,
 		store:       st,
 		companionID: companionID,
@@ -177,24 +181,24 @@ func (rm *Client) Logout(pubkeyHex string) {
 func (rm *Client) sendBinaryRequest(pubkeyHex string, body []byte, timeout time.Duration, label string) ([]byte, error) {
 	pubkeyBytes, err := hex.DecodeString(pubkeyHex)
 	if err != nil {
-		return nil, fmt.Errorf("invalid pubkey hex: %w", err)
+		return nil, fmt.Errorf("%w: hex: %w", ErrBadPubkey, err)
 	}
 
 	peerIdentity, err := meshcore.NewIdentityFromBytes(pubkeyBytes)
 	if err != nil {
-		return nil, fmt.Errorf("invalid pubkey: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrBadPubkey, err)
 	}
 
 	peer := rm.node.Peers().Lookup(peerIdentity.PublicKey())
 	if peer == nil {
-		return nil, fmt.Errorf("peer not found in peer table")
+		return nil, ErrUnknownPeer
 	}
 
 	rm.mu.Lock()
 	sess := rm.sessions[pubkeyHex]
 	rm.mu.Unlock()
 	if sess == nil || sess.sharedSecret == nil {
-		return nil, fmt.Errorf("not logged in to this repeater")
+		return nil, fmt.Errorf("%w to this repeater", ErrNotLoggedIn)
 	}
 
 	// The session decrypts the response, so the pending entry needn't carry the secret.
@@ -225,12 +229,14 @@ func (rm *Client) routedPacket(peer *node.Peer, payloadType byte, payload []byte
 	outPath, hashSize := learnedRoute(peer)
 	pub := peer.Identity.PublicKey()
 	routeType, pathLen := routeForPeer(outPath, hashSize, rm.bytesPerHop(pub[:]))
-	return &meshcore.Packet{
+	pkt := &meshcore.Packet{
 		Header:     meshcore.MakeHeader(routeType, payloadType, 0),
 		PathLength: pathLen,
 		Path:       outPath,
 		Payload:    payload,
-	}, outPath, hashSize
+	}
+	pkt.SetScope(rm.scopeFor(pub[:]))
+	return pkt, outPath, hashSize
 }
 
 // roundtripRequest awaits the tagged response; storeSecret puts the secret on the pending entry for sessionless matching.
@@ -261,12 +267,19 @@ func (rm *Client) roundtripRequest(peerPub [32]byte, peer *node.Peer, sharedSecr
 		return nil, fmt.Errorf("encoding request: %w", err)
 	}
 
-	resultCh := make(chan []byte, 1)
-	pr := &pendingRequest{ch: resultCh, created: time.Now(), peerPubKeyByte: peerPub[0]}
+	pr := &pendingRequest{peerPubKeyByte: peerPub[0]}
 	if storeSecret {
 		pr.sharedSecret = sharedSecret
 		pr.peerPubKey = peerPub
 	}
+	pkt, outPath, hashSize := rm.routedPacket(peer, meshcore.PayloadTypeReq, reqBytes)
+	return rm.sendAwaitTag(tag, pr, pkt, outPath, hashSize, peerPub, timeout, label)
+}
+
+// sendAwaitTag sends pkt and waits for the response echoing tag, sizing the wait from the route.
+func (rm *Client) sendAwaitTag(tag uint32, pr *pendingRequest, pkt *meshcore.Packet, outPath []byte, hashSize uint8, peerPub [32]byte, timeout time.Duration, label string) ([]byte, error) {
+	resultCh := make(chan []byte, 1)
+	pr.ch, pr.created = resultCh, time.Now()
 	rm.pendingMu.Lock()
 	rm.pending[tag] = pr
 	rm.pendingMu.Unlock()
@@ -277,19 +290,63 @@ func (rm *Client) roundtripRequest(peerPub [32]byte, peer *node.Peer, sharedSecr
 		rm.pendingMu.Unlock()
 	}()
 
-	pkt, outPath, hashSize := rm.routedPacket(peer, meshcore.PayloadTypeReq, reqBytes)
-
-	if err := rm.node.SendPacket(pkt); err != nil {
+	if err := meshpath.Send(rm.node, pkt, rm.scopeFor(peerPub[:]), 0); err != nil {
 		return nil, fmt.Errorf("sending %s req: %w", label, err)
 	}
 
-	wait := rm.replyTimeout(len(reqBytes), outPath, hashSize, timeout)
+	wait := rm.replyTimeout(len(pkt.Payload), outPath, hashSize, timeout)
 	rm.log.Debug(label+" req sent", "peer", fmt.Sprintf("%x", peerPub[:6]), "tag", fmt.Sprintf("%08x", tag), "wait", wait)
 
 	select {
 	case data := <-resultCh:
 		return data, nil
 	case <-time.After(wait):
-		return nil, fmt.Errorf("%s request timed out after %s", label, wait)
+		return nil, fmt.Errorf("%s request timed out after %s: %w", label, wait, ErrNoReply)
 	}
+}
+
+// RequestRegions asks a node in radio range which regions it floods (an anon REGIONS request). The
+// firmware answers only a direct request, so it goes zero-hop; it also rate-limits these, so a
+// timeout can mean it is throttling us rather than out of range.
+func (rm *Client) RequestRegions(pubkeyHex string, timeout time.Duration) (meshcore.AnonRegionsReply, error) {
+	pubkeyBytes, err := hex.DecodeString(pubkeyHex)
+	if err != nil {
+		return meshcore.AnonRegionsReply{}, fmt.Errorf("%w: hex: %w", ErrBadPubkey, err)
+	}
+	peer, err := meshcore.NewIdentityFromBytes(pubkeyBytes)
+	if err != nil {
+		return meshcore.AnonRegionsReply{}, fmt.Errorf("%w: %w", ErrBadPubkey, err)
+	}
+	secret, err := rm.node.SharedSecret(peer)
+	if err != nil {
+		return meshcore.AnonRegionsReply{}, fmt.Errorf("deriving shared secret: %w", err)
+	}
+	hashSize := rm.ownHashSize()
+	body, err := meshcore.BuildAnonRegionsRequest(nil, hashSize) // empty reply path: answer zero-hop
+	if err != nil {
+		return meshcore.AnonRegionsReply{}, err
+	}
+	tag := rm.UniqueTimestamp()
+	plaintext := binary.LittleEndian.AppendUint32(nil, tag)
+	plaintext = append(plaintext, body...)
+	req, err := meshcore.NewAnonReq(rm.node.Identity(), peer, plaintext, secret)
+	if err != nil {
+		return meshcore.AnonRegionsReply{}, fmt.Errorf("encrypting regions req: %w", err)
+	}
+	payload, err := req.ToBytes()
+	if err != nil {
+		return meshcore.AnonRegionsReply{}, err
+	}
+	pkt := &meshcore.Packet{
+		Header:     meshcore.MakeHeader(meshcore.RouteTypeDirect, meshcore.PayloadTypeAnonReq, 0),
+		PathLength: meshcore.MakePathLen(hashSize, 0),
+		Payload:    payload,
+	}
+	pub := peer.PublicKey()
+	pr := &pendingRequest{sharedSecret: secret, peerPubKeyByte: pub[0], peerPubKey: pub}
+	data, err := rm.sendAwaitTag(tag, pr, pkt, []byte{}, hashSize, pub, timeout, "regions")
+	if err != nil {
+		return meshcore.AnonRegionsReply{}, err
+	}
+	return meshcore.ParseAnonRegionsReply(data)
 }

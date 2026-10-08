@@ -3,6 +3,7 @@ package repeater
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"testing"
 
 	meshcore "github.com/OwlShack/meshcore-go"
@@ -474,5 +475,18 @@ func TestIsLoginReply(t *testing.T) {
 		if got := rm.isLoginReply(tt.data, tt.from); got != tt.want {
 			t.Errorf("%s: isLoginReply = %v, want %v", tt.name, got, tt.want)
 		}
+	}
+}
+
+// Sent with our "XX|" tag, region load leaves the repeater swallowing every later command, so it is refused before anything is sent.
+func TestSendCLI_RefusesRegionLoad(t *testing.T) {
+	rm := &Client{}
+	for _, cmd := range []string{"region load", "region  load", "region load x"} {
+		if _, err := rm.SendCLI("00", cmd, 0); !errors.Is(err, ErrRegionLoad) {
+			t.Errorf("%q: got %v, want ErrRegionLoad", cmd, err)
+		}
+	}
+	if _, err := rm.SendCLI("00", "region", 0); errors.Is(err, ErrRegionLoad) {
+		t.Error("plain region refused")
 	}
 }

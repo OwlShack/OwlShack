@@ -90,16 +90,23 @@ func TestKissStatsProvider_AnErrorReplyIsAnAnswer(t *testing.T) {
 	}
 }
 
-// answeringFeed is a KISS board that answers each stats query.
-type answeringFeed struct{ frameFeed }
+// answeringFeed is a KISS board that answers each stats query; noise overrides its noise floor reply.
+type answeringFeed struct {
+	frameFeed
+	noise []byte
+}
 
 func (f *answeringFeed) Send(b []byte) error {
 	if len(b) < 3 || b[1] != hardware.KISS_CMD_SETHARDWARE {
 		return nil
 	}
+	noise := f.noise
+	if noise == nil {
+		noise = []byte{0x9c, 0xff} // -100
+	}
 	reply := map[byte][]byte{
 		hardware.HW_CMD_GET_STATS:       make([]byte, 12),
-		hardware.HW_CMD_GET_NOISE_FLOOR: {0x9c, 0xff}, // -100
+		hardware.HW_CMD_GET_NOISE_FLOOR: noise,
 		hardware.HW_CMD_GET_BATTERY:     {0x04, 0x10}, // 4100
 		hardware.HW_CMD_GET_MCU_TEMP:    {0xd7, 0x00}, // 21.5
 	}[b[2]]
@@ -111,7 +118,7 @@ func (f *answeringFeed) Send(b []byte) error {
 
 // A query returns as soon as its answer is read, before the reply handlers run, so the first poll must report what the queries returned.
 func TestKissStatsProvider_FirstPollHasItsAnswers(t *testing.T) {
-	feed := &answeringFeed{frameFeed{dead: make(chan struct{})}}
+	feed := &answeringFeed{frameFeed: frameFeed{dead: make(chan struct{})}}
 	km := hardware.NewKissModem(feed)
 	if err := km.Connect(t.Context()); err != nil {
 		t.Fatal(err)
@@ -123,7 +130,34 @@ func TestKissStatsProvider_FirstPollHasItsAnswers(t *testing.T) {
 	p := NewKissStatsProvider(km, RadioInfo{})
 
 	ds := p.Stats(t.Context())
-	if ds.NoiseFloor != -100 || !ds.HaveBattery || ds.BatteryMV != 4100 || !ds.HaveMCUTemp || ds.MCUTempC != 21.5 {
+	if ds.NoiseFloor != -100 || !ds.HaveNoiseFloor || !ds.HaveBattery || ds.BatteryMV != 4100 || !ds.HaveMCUTemp || ds.MCUTempC != 21.5 {
 		t.Errorf("first poll = %+v, want noise -100, battery 4100, MCU 21.5", ds)
+	}
+}
+
+// The firmware answers a noise floor of 0 until it has sampled, so 0 is no reading yet.
+func TestKissStatsProvider_NoiseFloorZeroIsUnmeasured(t *testing.T) {
+	feed := &answeringFeed{frameFeed: frameFeed{dead: make(chan struct{})}, noise: []byte{0, 0}}
+	km := hardware.NewKissModem(feed)
+	if err := km.Connect(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	defer km.Close()
+	p := NewKissStatsProvider(km, RadioInfo{})
+	if ds := p.Stats(t.Context()); ds.HaveNoiseFloor {
+		t.Errorf("noise floor %d reported before the firmware sampled, want none", ds.NoiseFloor)
+	}
+}
+
+// A late reply goes through the handler, not the poll, and a 0 there is unmeasured too.
+func TestKissStatsProvider_LateZeroReplyIsUnmeasured(t *testing.T) {
+	p := &kissStatsProvider{}
+	p.onNoiseFloor(0, []byte{0x98, 0xff})
+	if !p.haveNoise || p.noiseFloor != -104 {
+		t.Fatalf("after -104: have %v, floor %d", p.haveNoise, p.noiseFloor)
+	}
+	p.onNoiseFloor(0, []byte{0, 0})
+	if p.haveNoise {
+		t.Error("a 0 reply still counts as measured")
 	}
 }

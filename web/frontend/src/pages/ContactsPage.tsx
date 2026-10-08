@@ -192,11 +192,7 @@ function ContactRow({
   onConfirm: () => void;
 }) {
   const displayName = contact.name || "unknown peer";
-  const detailTo = contactDetailPath(
-    companion,
-    contact.peerPubkey,
-    contact.type?.toUpperCase() === "REPEATER",
-  );
+  const detailTo = contactDetailPath(companion, contact.peerPubkey, contact.type);
   return (
     <div className="flex items-center gap-2 sm:gap-4 px-3 sm:px-4 py-3 hover:bg-muted/40 transition-colors">
       <Link to={detailTo} className="flex items-center gap-3 min-w-0 flex-1">

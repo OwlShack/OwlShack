@@ -155,6 +155,28 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("pathHashSize must be %d-%d bytes", MinPathHashSize, MaxPathHashSize)
 	}
 
+	if len(c.FloodRegions) > MaxFloodRegions {
+		return fmt.Errorf("at most %d regions in the list", MaxFloodRegions)
+	}
+	seenRegion := make(map[string]bool, len(c.FloodRegions))
+	tree := make([]RepeaterRegion, 0, len(c.FloodRegions))
+	for _, rg := range c.FloodRegions {
+		if err := ValidateRegionName(rg.Name); err != nil {
+			return err
+		}
+		if seenRegion[rg.Name] {
+			return fmt.Errorf("region %q is listed twice", rg.Name)
+		}
+		seenRegion[rg.Name] = true
+		tree = append(tree, RepeaterRegion{Name: rg.Name, Parent: rg.Parent})
+	}
+	if err := validateRegionParents(tree); err != nil {
+		return err
+	}
+	if err := c.FloodScope.Validate(false); err != nil {
+		return fmt.Errorf("floodScope: %w", err)
+	}
+
 	// Zero companions is valid: a fresh install and an observer-only setup both have none.
 
 	// A startCompanions failure after a reload exits the process, so anything that would fail companion construction must be rejected here.
@@ -180,6 +202,9 @@ func (c *Config) Validate() error {
 		}
 		if v := comp.PathHashSize; v != nil && (*v < MinPathHashSize || *v > MaxPathHashSize) {
 			return fmt.Errorf("companion %q: pathHashSize must be %d-%d bytes", comp.Name, MinPathHashSize, MaxPathHashSize)
+		}
+		if err := comp.FloodScope.Validate(true); err != nil {
+			return fmt.Errorf("companion %q floodScope: %w", comp.Name, err)
 		}
 		switch comp.DMPolicyOrDefault() {
 		case DMPolicyContacts, DMPolicyAllowlist, DMPolicyAnyone:
@@ -238,20 +263,12 @@ func (c *Config) Validate() error {
 		if r.FloodMaxUnscoped != nil && (*r.FloodMaxUnscoped < 0 || *r.FloodMaxUnscoped > 64) {
 			return fmt.Errorf("repeater %q: floodMaxUnscoped must be between 0 and 64", r.Name)
 		}
-		if r.DefaultRegion != "" {
-			if r.DefaultRegion == WildcardRegion {
-				return fmt.Errorf(`repeater %q: defaultRegion cannot be "*"`, r.Name)
-			}
-			found := false
-			for _, rg := range r.Regions {
-				if rg.Name == r.DefaultRegion {
-					found = true
-					break
-				}
-			}
-			if !found {
-				return fmt.Errorf("repeater %q: defaultRegion %q is not a configured region", r.Name, r.DefaultRegion)
-			}
+		if err := r.FloodScope.Validate(false); err != nil {
+			return fmt.Errorf("repeater %q floodScope: %w", r.Name, err)
+		}
+		// Firmware default_scope is one of its own regions.
+		if _, ok := r.FloodScope.RegionName(); ok && !slices.ContainsFunc(r.Regions, func(rg RepeaterRegion) bool { return r.FloodScope.NamesRegion(rg.Name) }) {
+			return fmt.Errorf("repeater %q: floodScope %q is not one of its regions", r.Name, r.FloodScope)
 		}
 		if r.HomeRegion != "" {
 			found := false
@@ -288,18 +305,22 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("repeater %q: floodAdvertInterval must be 0 (off) or %d-%d seconds (%d-%d hours)",
 				r.Name, MinFloodAdvertIntervalSecs, MaxFloodAdvertIntervalSecs, MinFloodAdvertIntervalSecs/3600, MaxFloodAdvertIntervalSecs/3600)
 		}
-		if len(r.Regions) > meshcore.MaxRegions {
-			return fmt.Errorf("repeater %q: at most %d regions", r.Name, meshcore.MaxRegions)
+		if n := len(r.Regions) - countWildcard(r.Regions); n > meshcore.MaxRegions {
+			return fmt.Errorf("repeater %q: at most %d regions besides \"*\"", r.Name, meshcore.MaxRegions)
 		}
 		seenRegion := make(map[string]bool, len(r.Regions))
 		for i, rg := range r.Regions {
 			if err := validateRegionName(rg.Name); err != nil {
 				return fmt.Errorf("repeater %q region[%d]: %w", r.Name, i, err)
 			}
-			if seenRegion[rg.Name] {
+			key := strings.TrimPrefix(rg.Name, "#") // the firmware's findByName ignores the "#"
+			if seenRegion[key] {
 				return fmt.Errorf("repeater %q: duplicate region %q", r.Name, rg.Name)
 			}
-			seenRegion[rg.Name] = true
+			seenRegion[key] = true
+		}
+		if err := validateRegionParents(r.Regions); err != nil {
+			return fmt.Errorf("repeater %q: %w", r.Name, err)
 		}
 	}
 

@@ -48,11 +48,13 @@ type Contact struct {
 	LastAdvertTS uint32
 	AddedAt      time.Time
 	Metadata     ContactMetadata
+	// FloodScope is the region floods to this contact go in: "inherit", "everywhere" or "region:<name>".
+	FloodScope string
 }
 
 const contactColumns = `companion_id, peer_pubkey, name, type, lat, lon,
 	feat1, feat2, out_path, out_path_hash_size, path_hash_size, last_seen, last_advert_ts,
-	added_at, metadata`
+	added_at, metadata, flood_scope`
 
 func scanContact(s interface{ Scan(...any) error }) (*Contact, error) {
 	var c Contact
@@ -62,7 +64,7 @@ func scanContact(s interface{ Scan(...any) error }) (*Contact, error) {
 	if err := s.Scan(
 		&c.CompanionID, &c.PeerPubKey, &c.Name, &c.Type, &c.Lat, &c.Lon,
 		&feat1, &feat2, &outPath, &c.OutPathHashSize, &c.PathHashSize, unixMS(&c.LastSeen), &lastAdvertTS,
-		unixMS(&c.AddedAt), &metaStr,
+		unixMS(&c.AddedAt), &metaStr, &c.FloodScope,
 	); err != nil {
 		return nil, err
 	}
@@ -115,8 +117,8 @@ func (r *ContactRepo) Restore(ctx context.Context, c *Contact) error {
 	_, err = r.db.ExecContext(ctx, `
 		INSERT INTO companion_contacts (
 			companion_id, peer_pubkey, name, type, lat, lon, feat1, feat2,
-			out_path, out_path_hash_size, path_hash_size, last_seen, last_advert_ts, added_at, metadata)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			out_path, out_path_hash_size, path_hash_size, last_seen, last_advert_ts, added_at, metadata, flood_scope)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(companion_id, peer_pubkey) DO UPDATE SET
 			name = excluded.name, type = excluded.type,
 			lat = excluded.lat, lon = excluded.lon,
@@ -127,9 +129,10 @@ func (r *ContactRepo) Restore(ctx context.Context, c *Contact) error {
 			last_seen = excluded.last_seen,
 			last_advert_ts = excluded.last_advert_ts,
 			added_at = excluded.added_at,
-			metadata = excluded.metadata`,
+			metadata = excluded.metadata,
+			flood_scope = excluded.flood_scope`,
 		c.CompanionID, c.PeerPubKey, c.Name, c.Type, c.Lat, c.Lon, c.Feat1, c.Feat2,
-		c.OutPath, c.OutPathHashSize, max(c.PathHashSize, 1), lastSeen, c.LastAdvertTS, addedAt.UnixMilli(), string(meta),
+		c.OutPath, c.OutPathHashSize, max(c.PathHashSize, 1), lastSeen, c.LastAdvertTS, addedAt.UnixMilli(), string(meta), scopeOrInherit(c.FloodScope),
 	)
 	if err != nil {
 		return fmt.Errorf("restoring contact: %w", err)
@@ -195,6 +198,39 @@ func (r *ContactRepo) SetRoute(ctx context.Context, companionID int64, peerPubKe
 	)
 	if err != nil {
 		return fmt.Errorf("setting contact route: %w", err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return ErrNotContact
+	}
+	return nil
+}
+
+// RegionScoped lists the contacts whose floods go in a named region, for the check that a region in use stays listed.
+func (r *ContactRepo) RegionScoped(ctx context.Context) ([]Contact, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT `+contactColumns+` FROM companion_contacts WHERE flood_scope LIKE 'region:%'`)
+	if err != nil {
+		return nil, fmt.Errorf("listing region-scoped contacts: %w", err)
+	}
+	defer rows.Close()
+	var out []Contact
+	for rows.Next() {
+		c, err := scanContact(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *c)
+	}
+	return out, rows.Err()
+}
+
+// SetFloodScope saves the region floods to this contact go in.
+func (r *ContactRepo) SetFloodScope(ctx context.Context, companionID int64, peerPubKey []byte, scope string) error {
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE companion_contacts SET flood_scope = ? WHERE companion_id = ? AND peer_pubkey = ?`,
+		scope, companionID, peerPubKey,
+	)
+	if err != nil {
+		return fmt.Errorf("setting contact region: %w", err)
 	}
 	if n, err := res.RowsAffected(); err == nil && n == 0 {
 		return ErrNotContact

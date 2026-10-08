@@ -7,6 +7,8 @@ import (
 	"time"
 
 	meshcore "github.com/OwlShack/meshcore-go"
+
+	"github.com/OwlShack/OwlShack/internal/meshpath"
 )
 
 // Stats is a live snapshot of the repeater's relay activity, for the API.
@@ -89,8 +91,11 @@ func (r *Repeater) Stats() Stats {
 		s.LastSNR, s.LastRSSI = &snr, &rssi
 	}
 	if r.haveDeviceStats.Load() {
-		nf := int(r.noiseFloor.Load())
-		s.NoiseFloor, s.BatteryMV = &nf, r.batteryReading()
+		if v := r.noiseFloor.Load(); v != noNoiseFloor {
+			nf := int(v)
+			s.NoiseFloor = &nf
+		}
+		s.BatteryMV = r.batteryReading()
 	}
 	if r.cfg.Latitude != nil {
 		s.Latitude = *r.cfg.Latitude
@@ -138,13 +143,13 @@ func (r *Repeater) countTx(flood bool) {
 	r.sentDirect.Add(1)
 }
 
-// sendPkt queues a packet we originate, counting it (and its airtime) first.
-func (r *Repeater) sendPkt(pkt *meshcore.Packet, priority uint8, delay time.Duration) error {
+// sendPkt queues a packet we originate at the firmware's priority for it, counting it (and its airtime) first; scope applies to a flood.
+func (r *Repeater) sendPkt(pkt *meshcore.Packet, scope *meshcore.Region, delay time.Duration) error {
 	r.countTx(pkt.IsRouteFlood())
 	if r.airtime != nil {
 		r.txAirtimeMs.Add(uint64(r.airtime(2 + len(pkt.Path) + len(pkt.Payload))))
 	}
-	return r.node.SendPacketDelayed(pkt, priority, delay)
+	return meshpath.Send(r.node, pkt, scope, delay)
 }
 
 // removeNeighbor drops every neighbour whose key starts with the prefix, as firmware `neighbor.remove` does.

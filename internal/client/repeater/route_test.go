@@ -52,7 +52,7 @@ func routeTestClient(t *testing.T) (*Client, int64, []byte) {
 	t.Cleanup(n.Stop)
 	n.Peers().Insert(&node.Peer{Identity: peer.Identity, Name: "JKSparrOwl"})
 	own := func() uint8 { return 2 }
-	return NewClient(n, st, comp.ID, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, own), comp.ID, pubkey
+	return NewClient(n, st, comp.ID, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, own, func([]byte) *meshcore.Region { return nil }), comp.ID, pubkey
 }
 
 func pubkeyArray(b []byte) [meshcore.PubKeySize]byte {

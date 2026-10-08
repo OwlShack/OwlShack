@@ -77,7 +77,7 @@ func (p *openhopStatsProvider) snapshot() DeviceStats {
 	if at.IsZero() || time.Since(at) > StaleReadingAfter {
 		return ds
 	}
-	ds.NoiseFloor = int16(st.NoiseFloor)
+	ds.NoiseFloor, ds.HaveNoiseFloor = int16(st.NoiseFloor), true
 	ds.BatteryMV, ds.HaveBattery = st.BatteryMV, st.BatteryValid
 	ds.MCUTempC, ds.HaveMCUTemp = float64(st.TempC), st.TempValid
 	return ds

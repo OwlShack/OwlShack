@@ -25,7 +25,7 @@ func TestSendReciprocalPath_SkipsWhatTheLibraryAnswered(t *testing.T) {
 	for _, marked := range []bool{true, false} {
 		radio := &countingRadio{}
 		n := node.New(meshcore.NewLocalIdentityFromSeed([32]byte{1}), radio)
-		rm := NewClient(n, nil, 0, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, func() uint8 { return 1 })
+		rm := NewClient(n, nil, 0, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, func() uint8 { return 1 }, func([]byte) *meshcore.Region { return nil })
 		secret, _ := n.Identity().SharedSecret(peer.Identity)
 		pkt := &meshcore.Packet{Header: meshcore.MakeHeader(meshcore.RouteTypeFlood, meshcore.PayloadTypePath, 0), PathLength: 1, Path: []byte{0x11}}
 		if marked {

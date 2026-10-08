@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"math"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -60,7 +61,7 @@ type Repeater struct {
 	logging     atomic.Bool // `log start/stop` — per-packet trace to the bot log
 
 	// Cached modem readings, refreshed by deviceStatsLoop.
-	noiseFloor      atomic.Int32
+	noiseFloor      atomic.Int32 // noNoiseFloor until the radio has measured one
 	batteryMV       atomic.Uint32
 	haveBattery     atomic.Bool
 	haveDeviceStats atomic.Bool
@@ -102,6 +103,8 @@ type Repeater struct {
 	}
 
 	lastTS atomic.Uint32 // last timestamp we stamped (firmware getCurrentTimeUnique)
+
+	regionLoad *regionLoad // non-nil between `region load` and the blank line ending it; guarded by mu
 
 	mu     sync.Mutex
 	cancel context.CancelFunc
@@ -196,7 +199,6 @@ func NewRepeater(cfg config.RepeaterConfig, mux *node.RadioMux, st *store.Store,
 	r.node = node.New(id, radio, opts...)
 	r.routeStats = r.node.RouteStats
 	r.node.Regions().SetWildcardFlags(wildcardFlags)
-	r.node.Regions().SetDefault(cfg.DefaultRegion) // the scope ReplyScope falls back to
 
 	r.registerHandlers()
 
@@ -248,6 +250,20 @@ func (r *Repeater) Start(ctx context.Context) error {
 	return nil
 }
 
+// cacheDeviceStats keeps the latest board readings for the stats API and the over-mesh STATUS reply.
+func (r *Repeater) cacheDeviceStats(ds DeviceStats) {
+	nf := int32(noNoiseFloor)
+	if ds.HaveNoiseFloor {
+		nf = int32(ds.NoiseFloor)
+	}
+	r.noiseFloor.Store(nf)
+	r.batteryMV.Store(uint32(ds.BatteryMV))
+	r.haveBattery.Store(ds.HaveBattery)
+	r.mcuTempC.Store(int32(ds.MCUTempC * 10))
+	r.haveMCUTemp.Store(ds.HaveMCUTemp)
+	r.haveDeviceStats.Store(true)
+}
+
 // deviceStatsLoop refreshes the cached readings because pollStats blocks ~500ms and can't run on the packet path.
 func (r *Repeater) deviceStatsLoop(ctx context.Context) {
 	const interval = 60 * time.Second
@@ -256,14 +272,7 @@ func (r *Repeater) deviceStatsLoop(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		r.noiseFloor.Store(int32(ds.NoiseFloor))
-		r.batteryMV.Store(uint32(ds.BatteryMV))
-		r.haveBattery.Store(ds.HaveBattery)
-		if ds.HaveMCUTemp {
-			r.mcuTempC.Store(int32(ds.MCUTempC * 10))
-			r.haveMCUTemp.Store(true)
-		}
-		r.haveDeviceStats.Store(true)
+		r.cacheDeviceStats(ds)
 	}
 	refresh()
 	t := time.NewTicker(interval)
@@ -307,11 +316,10 @@ func regionsFromConfig(cfg []config.RepeaterRegion) (named []*meshcore.Region, w
 }
 
 // ApplyRegions updates regions in place so a region-only edit doesn't restart the node and wipe neighbours, routes and counters.
-func (r *Repeater) ApplyRegions(regions []config.RepeaterRegion, defaultRegion, homeRegion string) {
+func (r *Repeater) ApplyRegions(regions []config.RepeaterRegion, scope config.FloodScope, homeRegion string) {
 	named, wildcardFlags := regionsFromConfig(regions)
 	rm := r.node.Regions()
 	rm.SetWildcardFlags(wildcardFlags)
-	rm.SetDefault(defaultRegion)
 
 	want := make(map[string]*meshcore.Region, len(named))
 	for _, rg := range named {
@@ -336,7 +344,7 @@ func (r *Repeater) ApplyRegions(regions []config.RepeaterRegion, defaultRegion, 
 
 	r.mu.Lock()
 	r.cfg.Regions = regions
-	r.cfg.DefaultRegion = defaultRegion
+	r.cfg.FloodScope = scope
 	r.cfg.HomeRegion = homeRegion
 	r.mu.Unlock()
 }
@@ -376,13 +384,17 @@ func (l *rateLimiter) allow() bool {
 	return true
 }
 
+// noNoiseFloor marks a noise floor not yet measured, kept in the same atomic so a reader never pairs a value with the wrong flag.
+const noNoiseFloor = math.MinInt32
+
 // DeviceStats are the shared modem's board readings, polled for the over-mesh
 // STATUS and telemetry replies. HaveMCUTemp is false when the board can't
 // measure one, and HaveBattery false when there is no cell, so 0 is never mistaken for a reading.
 type DeviceStats struct {
-	NoiseFloor  int16
-	BatteryMV   uint16
-	HaveBattery bool
-	MCUTempC    float64
-	HaveMCUTemp bool
+	NoiseFloor     int16
+	HaveNoiseFloor bool
+	BatteryMV      uint16
+	HaveBattery    bool
+	MCUTempC       float64
+	HaveMCUTemp    bool
 }

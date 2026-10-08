@@ -7,6 +7,8 @@ import (
 	"time"
 
 	meshcore "github.com/OwlShack/meshcore-go"
+
+	"github.com/OwlShack/OwlShack/internal/meshpath"
 )
 
 type LoginResult struct {
@@ -28,17 +30,17 @@ func (rm *Client) SendRoomLogin(pubkeyHex, password string, syncSince uint32, ti
 func (rm *Client) sendLogin(pubkeyHex, password string, roomSyncSince *uint32, timeout time.Duration) (*LoginResult, error) {
 	pubkeyBytes, err := hex.DecodeString(pubkeyHex)
 	if err != nil {
-		return nil, fmt.Errorf("invalid pubkey hex: %w", err)
+		return nil, fmt.Errorf("%w: hex: %w", ErrBadPubkey, err)
 	}
 
 	peerIdentity, err := meshcore.NewIdentityFromBytes(pubkeyBytes)
 	if err != nil {
-		return nil, fmt.Errorf("invalid pubkey: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrBadPubkey, err)
 	}
 
 	peer := rm.node.Peers().Lookup(peerIdentity.PublicKey())
 	if peer == nil {
-		return nil, fmt.Errorf("peer not found in peer table")
+		return nil, ErrUnknownPeer
 	}
 
 	// The static identity (not an ephemeral key) puts us in the repeater's ACL, so its getClient() lookup accepts blank-password reauth.
@@ -107,7 +109,8 @@ func (rm *Client) sendLogin(pubkeyHex, password string, roomSyncSince *uint32, t
 
 	pkt, outPath, hashSize := rm.routedPacket(peer, meshcore.PayloadTypeAnonReq, payload)
 
-	if err := rm.node.SendPacket(pkt); err != nil {
+	pub := peer.Identity.PublicKey()
+	if err := meshpath.Send(rm.node, pkt, rm.scopeFor(pub[:]), 0); err != nil {
 		return nil, fmt.Errorf("sending login: %w", err)
 	}
 
@@ -152,6 +155,6 @@ func (rm *Client) sendLogin(pubkeyHex, password string, roomSyncSince *uint32, t
 			rm.node.Peers().ResetOutPath(peerIdentity.PublicKey())
 			rm.persistOutPath(pubkeyBytes, nil, 0)
 		}
-		return nil, fmt.Errorf("login timed out after %s", wait)
+		return nil, fmt.Errorf("login timed out after %s: %w", wait, ErrNoReply)
 	}
 }

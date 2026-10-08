@@ -22,7 +22,9 @@ type RadioInfo struct {
 }
 
 type DeviceStats struct {
-	NoiseFloor int16
+	// NoiseFloor is dBm; HaveNoiseFloor is false until the radio has measured one, so an unmeasured 0 never reads as a reading.
+	NoiseFloor     int16
+	HaveNoiseFloor bool
 	// HaveBattery is false when there is no cell at all; a KISS board answering 0 still sets it.
 	BatteryMV   uint16
 	HaveBattery bool
@@ -93,6 +95,7 @@ type kissStatsProvider struct {
 	mu          sync.Mutex
 	fwCounters  *hardware.FirmwareStats // nil until the modem answers HW_CMD_GET_STATS
 	noiseFloor  int16
+	haveNoise   bool
 	batteryMV   uint16
 	haveBattery bool
 	mcuTempC    float64
@@ -199,7 +202,7 @@ func (p *kissStatsProvider) Stats(ctx context.Context) DeviceStats {
 	if nf, err := p.modem.NoiseFloor(ctx); err != nil {
 		p.log.Debug("noise floor unavailable", "error", err)
 	} else {
-		record(func() { p.noiseFloor = nf })
+		record(func() { p.noiseFloor, p.haveNoise = nf, nf != 0 }) // the firmware answers 0 until it has sampled
 	}
 	if mv, err := p.modem.Battery(ctx); err != nil {
 		p.log.Debug("battery unavailable", "error", err)
@@ -231,12 +234,13 @@ func (p *kissStatsProvider) snapshot() DeviceStats {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return DeviceStats{
-		NoiseFloor:  p.noiseFloor,
-		BatteryMV:   p.batteryMV,
-		HaveBattery: p.haveBattery && fresh,
-		UptimeSecs:  uint32(time.Since(p.startTime).Seconds()),
-		MCUTempC:    p.mcuTempC,
-		HaveMCUTemp: p.haveMCUTemp && fresh,
+		NoiseFloor:     p.noiseFloor,
+		HaveNoiseFloor: p.haveNoise && fresh,
+		BatteryMV:      p.batteryMV,
+		HaveBattery:    p.haveBattery && fresh,
+		UptimeSecs:     uint32(time.Since(p.startTime).Seconds()),
+		MCUTempC:       p.mcuTempC,
+		HaveMCUTemp:    p.haveMCUTemp && fresh,
 	}
 }
 
@@ -247,6 +251,7 @@ func (p *kissStatsProvider) onNoiseFloor(_ byte, data []byte) {
 	p.lastReply.Store(time.Now().UnixNano())
 	p.mu.Lock()
 	p.noiseFloor = int16(binary.LittleEndian.Uint16(data[:2]))
+	p.haveNoise = p.noiseFloor != 0
 	p.mu.Unlock()
 }
 

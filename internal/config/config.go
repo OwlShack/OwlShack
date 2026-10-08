@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/OwlShack/meshcore-go/hardware/openhop"
@@ -14,6 +15,8 @@ import (
 type ChannelRef struct {
 	Name       string `json:"name" yaml:"name" toml:"name"`
 	PrivateKey string `json:"privateKey,omitempty" yaml:"privateKey,omitempty" toml:"privateKey,omitempty"`
+	// FloodScope is this channel's region; inherit takes the companion's.
+	FloodScope FloodScope `json:"floodScope,omitempty" yaml:"floodScope,omitempty" toml:"floodScope,omitempty"`
 }
 
 func (cr *ChannelRef) UnmarshalText(text []byte) error {
@@ -38,13 +41,14 @@ func (cl *ChannelList) UnmarshalJSON(data []byte) error {
 		}
 		// ChannelRef's TextUnmarshaler (for TOML strings) makes encoding/json reject the object form.
 		var ref struct {
-			Name       string `json:"name"`
-			PrivateKey string `json:"privateKey"`
+			Name       string     `json:"name"`
+			PrivateKey string     `json:"privateKey"`
+			FloodScope FloodScope `json:"floodScope"`
 		}
 		if err := json.Unmarshal(item, &ref); err != nil {
 			return fmt.Errorf("channel entry must be a string or {name, privateKey} object: %w", err)
 		}
-		result = append(result, ChannelRef{Name: ref.Name, PrivateKey: ref.PrivateKey})
+		result = append(result, ChannelRef{Name: ref.Name, PrivateKey: ref.PrivateKey, FloodScope: ref.FloodScope})
 	}
 	*cl = result
 	return nil
@@ -97,6 +101,11 @@ type Config struct {
 	// Default per-hop path hash width in BYTES for floods we originate; nil == 1. The firmware's `path.hash.mode` is this minus one.
 	PathHashSize *int `json:"pathHashSize,omitempty" yaml:"pathHashSize,omitempty" toml:"pathHashSize,omitempty"`
 
+	// FloodRegions are the regions every picker offers and received packets are labelled from.
+	FloodRegions []FloodRegion `json:"floodRegions,omitempty" yaml:"floodRegions,omitempty" toml:"floodRegion,omitempty"`
+	// FloodScope is the top of the region cascade, so it never inherits.
+	FloodScope FloodScope `json:"floodScope,omitempty" yaml:"floodScope,omitempty" toml:"floodScope,omitempty"`
+
 	// Web UI
 	ListenAddr *string `json:"listenAddr" yaml:"listenAddr" toml:"listenAddr"`
 	// MapProvider is the basemap, one of MapProviders; nil takes CARTO when MapTileKey is set, else OpenStreetMap.
@@ -143,6 +152,7 @@ func DefaultConfig() Config {
 	tx := uint8(22)
 
 	return Config{
+		FloodScope: ScopeEverywhere,
 		Connection: &connection,
 		BaudRate:   &baudRate,
 		Freq:       &freq,
@@ -286,6 +296,9 @@ func (c *Config) ApplyDefaults() {
 		c.TX = defaults.TX
 	}
 
+	if c.FloodScope == "" {
+		c.FloodScope = ScopeEverywhere
+	}
 	// Hoist legacy per-companion mqtt: the first wins and its companion becomes the selected node.
 	for i := range c.Companions {
 		comp := &c.Companions[i]
@@ -306,6 +319,57 @@ func (c *Config) ApplyDefaults() {
 	if c.Mqtt != nil {
 		for i := range c.Mqtt.Brokers {
 			c.Mqtt.Brokers[i].migrateTopicPrefix()
+		}
+	}
+
+	for i := range c.Companions {
+		comp := &c.Companions[i]
+		comp.FloodScope = scopeOrInherit(comp.FloodScope)
+		if comp.Channels != nil {
+			for j := range *comp.Channels {
+				(*comp.Channels)[j].FloodScope = scopeOrInherit((*comp.Channels)[j].FloodScope)
+			}
+		}
+		if comp.Triggers != nil {
+			for j := range *comp.Triggers {
+				t := &(*comp.Triggers)[j]
+				t.FloodScope = scopeOrInherit(t.FloodScope)
+				if t.Channels != nil {
+					for k := range *t.Channels {
+						(*t.Channels)[k].FloodScope = scopeOrInherit((*t.Channels)[k].FloodScope)
+					}
+				}
+			}
+		}
+	}
+	if r := c.Repeater; r != nil && r.FloodScope == "" {
+		r.FloodScope = ScopeForRegionName(r.DefaultRegion)
+		if _, ok := r.FloodScope.RegionName(); ok && !slices.ContainsFunc(r.Regions, func(rg RepeaterRegion) bool { return r.FloodScope.NamesRegion(rg.Name) }) {
+			r.Regions = append(r.Regions, RepeaterRegion{Name: r.DefaultRegion, Parent: WildcardRegion}) // firmware auto-creates the default region
+		}
+		r.DefaultRegion = ""
+	}
+	for i := range c.FloodRegions {
+		if c.FloodRegions[i].Parent == "" {
+			c.FloodRegions[i].Parent = WildcardRegion // a config file may leave it out: the top
+		}
+	}
+	if r := c.Repeater; r != nil {
+		for i := range r.Regions {
+			if r.Regions[i].Parent == "" && r.Regions[i].Name != WildcardRegion {
+				r.Regions[i].Parent = WildcardRegion // saved before parents were kept
+			}
+		}
+		// A home or parent named with or without the "#" is the stored region, as the firmware finds it.
+		for _, rg := range r.Regions {
+			if r.HomeRegion != "" && SameRegionName(rg.Name, r.HomeRegion) {
+				r.HomeRegion = rg.Name
+			}
+			for i := range r.Regions {
+				if r.Regions[i].Parent != WildcardRegion && r.Regions[i].Parent != "" && SameRegionName(rg.Name, r.Regions[i].Parent) {
+					r.Regions[i].Parent = rg.Name
+				}
+			}
 		}
 	}
 }

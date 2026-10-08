@@ -63,7 +63,8 @@ func reloadRepeater(ctx context.Context, oldCfg, newCfg *config.Config, running 
 	}
 	// Region-only change: apply it live so the neighbour list, learned routes and relay counters survive.
 	if running != nil && oldCfg != nil && onlyRegionsDiffer(effectiveRepeaterConfig(oldCfg), effectiveRepeaterConfig(newCfg)) {
-		running.ApplyRegions(newCfg.Repeater.Regions, newCfg.Repeater.DefaultRegion, newCfg.Repeater.HomeRegion)
+		eff := effectiveRepeaterConfig(newCfg)
+		running.ApplyRegions(eff.Regions, eff.FloodScope, eff.HomeRegion)
 		return running, nil
 	}
 	stopRepeater(running)
@@ -77,7 +78,7 @@ func onlyRegionsDiffer(a, b *config.RepeaterConfig) bool {
 	}
 	x, y := *a, *b
 	x.Regions, y.Regions = nil, nil
-	x.DefaultRegion, y.DefaultRegion = "", ""
+	x.FloodScope, y.FloodScope = "", ""
 	x.HomeRegion, y.HomeRegion = "", ""
 	return reflect.DeepEqual(x, y)
 }
@@ -90,11 +91,12 @@ func statsPoller(stats modem.StatsProvider) func(context.Context) repeater.Devic
 	return func(ctx context.Context) repeater.DeviceStats {
 		ds := stats.Stats(ctx)
 		return repeater.DeviceStats{
-			NoiseFloor:  ds.NoiseFloor,
-			BatteryMV:   ds.BatteryMV,
-			HaveBattery: ds.HaveBattery,
-			MCUTempC:    ds.MCUTempC,
-			HaveMCUTemp: ds.HaveMCUTemp,
+			NoiseFloor:     ds.NoiseFloor,
+			HaveNoiseFloor: ds.HaveNoiseFloor,
+			BatteryMV:      ds.BatteryMV,
+			HaveBattery:    ds.HaveBattery,
+			MCUTempC:       ds.MCUTempC,
+			HaveMCUTemp:    ds.HaveMCUTemp,
 		}
 	}
 }

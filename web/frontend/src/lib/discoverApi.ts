@@ -57,3 +57,35 @@ export const discoverApi = {
   state: () => call("GET"),
   start: (types: number[]) => call("POST", { types }),
 };
+
+// One repeater in a Discover nearby run. A firmware repeater answers 4 regions requests every 3 minutes from anyone, so "no answer" can be that limit.
+export interface RegionScanRepeater {
+  pubkey: string;
+  name: string;
+  snr: number;
+  status: "waiting" | "asking" | "answered" | "no answer";
+  // As reported: "*" first when it floods unscoped traffic.
+  regions: string[];
+}
+
+export interface RegionScanState {
+  running: boolean;
+  phase: "" | "listening" | "asking" | "done";
+  secsLeft: number;
+  startedAt: string;
+  repeaters: RegionScanRepeater[];
+}
+
+async function regionScan(method: "GET" | "POST"): Promise<RegionScanState> {
+  const res = await fetch("/api/discover/regions", { method });
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(err?.error || `discover nearby failed (${res.status})`);
+  }
+  return (await res.json()) as RegionScanState;
+}
+
+export const regionScanApi = {
+  state: () => regionScan("GET"),
+  start: () => regionScan("POST"),
+};

@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"strings"
 
 	meshcore "github.com/OwlShack/meshcore-go"
 )
@@ -26,7 +27,9 @@ type RepeaterConfig struct {
 	FloodMaxAdvert   *int    `json:"floodMaxAdvert,omitempty" yaml:"floodMaxAdvert,omitempty" toml:"floodMaxAdvert,omitempty"`       // advert-specific hop cap (firmware default 8)
 	LoopDetect       *string `json:"loopDetect,omitempty" yaml:"loopDetect,omitempty" toml:"loopDetect,omitempty"`                   // off|minimal|moderate|strict
 
-	// Scope for our own flood adverts (firmware default_scope); empty = unscoped, which is valid.
+	// FloodScope is the region for this node's own adverts and the replies it cannot scope to the request (firmware default_scope).
+	FloodScope FloodScope `json:"floodScope,omitempty" yaml:"floodScope,omitempty" toml:"floodScope,omitempty"`
+	// Deprecated: a config file's name for FloodScope, folded in by ApplyDefaults.
 	DefaultRegion string `json:"defaultRegion,omitempty" yaml:"defaultRegion,omitempty" toml:"defaultRegion,omitempty"`
 
 	// Labels this node's home region (firmware home_id): stored and reported, never routed on.
@@ -52,8 +55,61 @@ type RepeaterConfig struct {
 
 // RepeaterRegion is one transport scope the repeater serves; DenyFlood keeps it known but not re-flooded.
 type RepeaterRegion struct {
-	Name      string `json:"name" yaml:"name" toml:"name"`
+	Name string `json:"name" yaml:"name" toml:"name"`
+	// Parent is the region it sits under, "*" at the top; the firmware keeps it for organising only, matching ignores it.
+	Parent    string `json:"parent,omitempty" yaml:"parent,omitempty" toml:"parent,omitempty"`
 	DenyFlood bool   `json:"denyFlood,omitempty" yaml:"denyFlood,omitempty" toml:"denyFlood,omitempty"`
+}
+
+// SameRegionName is the firmware's findByName: a leading "#" is ignored, so "#nz" and "nz" are one region; "*" is only ever itself.
+func SameRegionName(a, b string) bool {
+	if a == WildcardRegion || b == WildcardRegion {
+		return a == b
+	}
+	return strings.TrimPrefix(a, "#") == strings.TrimPrefix(b, "#")
+}
+
+// countWildcard is 1 when "*" has an entry; the firmware's 32 slots are for named regions, "*" lives outside them.
+func countWildcard(regions []RepeaterRegion) int {
+	for _, rg := range regions {
+		if rg.Name == WildcardRegion {
+			return 1
+		}
+	}
+	return 0
+}
+
+// validateRegionParents checks every parent is "*" or another listed region and the parents form a tree.
+func validateRegionParents(regions []RepeaterRegion) error {
+	parent := make(map[string]string, len(regions))
+	for _, rg := range regions {
+		parent[rg.Name] = rg.Parent
+	}
+	for _, rg := range regions {
+		if rg.Name == WildcardRegion {
+			if rg.Parent != "" {
+				return fmt.Errorf(`region "*" is the top and has no parent`)
+			}
+			continue
+		}
+		if rg.Parent == "" {
+			return fmt.Errorf("region %q: parent is required (\"*\" for the top)", rg.Name)
+		}
+		if _, ok := parent[rg.Parent]; !ok && rg.Parent != WildcardRegion {
+			return fmt.Errorf("region %q: parent %q is not a configured region", rg.Name, rg.Parent)
+		}
+		p := rg.Parent
+		for range regions {
+			if p == WildcardRegion {
+				break
+			}
+			if p == rg.Name {
+				return fmt.Errorf("region %q is inside itself", rg.Name)
+			}
+			p = parent[p]
+		}
+	}
+	return nil
 }
 
 // WildcardRegion ("*") is the unscoped flood scope; like the firmware's wildcard it cannot be removed, and with no entry it allows flood.

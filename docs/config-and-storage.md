@@ -228,6 +228,31 @@ radio/connection change still restarts everything (modem reconnect);
   The output is deterministic (sorted ids, fixed rounding, no gzip timestamp), so
   rerunning the generator on an unchanged tag must leave `git status` clean; if it
   does not, the committed file is stale.
+- **Region scopes cascade like path hash size, one level deeper.** `settings.flood_regions`
+  (JSON `[{name, parent}]`, parent `*` at the top, as `repeater.regions` holds it) is the list every picker offers and received floods are labelled from, with
+  the repeater's relay regions; `settings.flood_scope` is the default (`everywhere` or
+  `region:<name>`). `companions`, `companion_channels`, `companion_contacts` and `triggers`
+  each carry `flood_scope` (`inherit` | `everywhere` | `region:<name>`, CHECKed), and
+  `config.ResolveScope` takes the most specific that does not inherit: channel or contact, then
+  companion, then settings; a bot's own comes before the channel or contact it posts to. An API save
+  that changes a scope to a region missing from the Settings list is refused, and the Settings
+  save refuses dropping a listed region still in use, naming its users. A scope left unlisted by an
+  older build stays until changed, and loading never checks, so a stored config always starts. The API requires `floodScope` on every save that carries it; a config file that leaves it
+  out inherits, except the repeater's, which is everywhere. `repeater.flood_scope` is its own (firmware `default_scope`): `everywhere` or one
+  of `repeater.regions`, never inherited; picking one clears its deny flood and removing it resets
+  the scope, as on firmware. Sends we build are scoped with `Packet.SetScope`; channel posts and DMs use the
+  library's `Send*Scoped`. `messages.flood_scope` records what each message carried (`unknown` is
+  a region not in the list, `unrecorded` predates it); packets are labelled on read.
+  Our repeater finds a region as the firmware's `findByName` does, with a leading `#` ignored:
+  `#nz` and `nz` are one region, so both in a list is a duplicate, and a home, parent, add, deny
+  flood or remove naming either finds the stored one and keeps its stored name.
+  Both lists nest by parent for organising only (matching ignores it), are validated alike (each
+  parent listed or `*`, no loops), and every picker shows the tree. Removing a Settings region moves
+  its sub-regions up to its parent; copying from our repeater brings its parents, less `*` and `$` names.
+  **Discover nearby** (`app/region_scan.go`, outliving a reload) runs a zero-hop discovery for
+  repeaters, then sends each an anon REGIONS request (type 0x01, direct, empty reply path, from the
+  first companion) and retries once: the firmware answers only a direct one, and only 4 every 3
+  minutes from anyone (`anon_limiter(4, 180)`), so a second retry would cost half that.
 - **DM acceptance is `companions.dm_policy`** (`contacts` | `allowlist` |
   `anyone`, default `contacts`) with `companions.dm_allow` holding the
   allowlist's pubkeys newline-encoded, the same encoding `triggers.contacts`
@@ -485,6 +510,7 @@ GET  /api/companions/{name}/contacts/{pubkey}                (single contact; 40
 POST /api/companions/{name}/contacts                         { pubkey }   (also registers the peer with the running nodes)
 DELETE /api/companions/{name}/contacts/{pubkey}
 PATCH /api/companions/{name}/contacts/{pubkey}               { isRepeater?, repeaterPassword?, telemPerms?, ... }   (merges: only named fields change; an unknown or null field, or a value the form does not offer, is a 400; 404 if absent)
+PUT  /api/companions/{name}/contacts/{pubkey}/region         { floodScope }   (inherit | everywhere | region:<name>; 404 if not a contact)
 
 GET|POST|DELETE /api/companions/{name}/channels[/{channel}]
 
@@ -511,12 +537,18 @@ GET  /api/companions/{name}/messages/{id}/path?channel=
 
 POST /api/companions/{name}/trace                            { path, pathHashSize }
 
+# Remote nodes (repeaters, rooms, sensors). A failure says why in "error", with
+# a status to act on: 400 bad pubkey, 401 not logged in, 403 not admin, 404 node
+# not in the peer table, 409 no direct route yet, 422 refused (by the node, or as something it can't take: no regions, `region load`), 502 a
+# reply that could not be read, 503 too many commands in flight, 504 no reply.
+# 500 is only the unexpected (logged). client/repeater/errors.go names each.
 POST /api/companions/{name}/repeaters/{pubkey}/login         { password }
 GET  /api/companions/{name}/repeaters/{pubkey}/status
 POST /api/companions/{name}/repeaters/{pubkey}/cli           { command }
 GET|DELETE /api/companions/{name}/repeaters/{pubkey}/session
 GET|DELETE /api/companions/{name}/repeaters/{pubkey}/path       GET: { outPath, hops, hasPath, directNeighbor, pathHashSize (the route's), bytesPerHop }
 PUT  /api/companions/{name}/repeaters/{pubkey}/path            { route: flood|direct|path, path?, pathHashSize }
+GET  /api/companions/{name}/repeaters/{pubkey}/regions         (admin; repeaters and rooms) {regions:[{name,parent,denyFlood}], home ("*" none), default ("" none), defaultSupported, partial}; 422 when the firmware has no regions. Edits go through .../cli, and `region save` keeps them
 
 POST /api/companions/{name}/rooms/{pubkey}/login             { password, syncSince? }
 GET|DELETE /api/companions/{name}/rooms/{pubkey}/session
@@ -528,6 +560,10 @@ GET|DELETE /api/companions/{name}/rooms/{pubkey}/session
 # unmatched /api/* paths 404.
 GET  /api/config/settings                                    (radio/connection/log + setupComplete; modemTokenSet, never the token)
 PUT  /api/config/settings
+PUT  /api/config/repeater/scope                              { floodScope }   (everywhere or one of its regions; allows flood on it, as `region default`)
+PUT  /api/config/repeater/home                               { region }       ("*" for none; a label, as `region home`)
+PUT  /api/config/regions                                     { regions: [{name, parent}], floodScope }   (the list and default together; both required, every parent too)
+GET|POST /api/discover/regions                               (Discover nearby: POST starts or joins a run, 503 without a companion; poll GET for phase listening|asking|done)
 GET  /api/config/mqtt                                        (feed settings; node by companion id)
 PUT  /api/config/mqtt
 GET  /api/config/mqtt/brokers

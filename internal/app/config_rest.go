@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"slices"
 	"strings"
 
@@ -15,9 +16,11 @@ import (
 // Every per-resource write validates the assembled result before it touches the DB, and keeps ids across renames.
 
 // configMutate is the shared write transaction, serialized on the store's writer goroutine.
-func (b *backend) configMutate(ctx context.Context, apply func(*configRows), persist func(*store.Store) error) error {
+func (b *backend) configMutate(ctx context.Context, apply func(*configRows) error, persist func(*store.Store) error) error {
 	return writeConfigTx(ctx, b.db, b.reload, func(rows *configRows) error {
-		apply(rows)
+		if err := apply(rows); err != nil {
+			return err
+		}
 		if verr := assembleFromRows(rows).Validate(); verr != nil {
 			return verr
 		}
@@ -70,7 +73,7 @@ func (b *backend) SaveSettings(ctx context.Context, in api.SettingsInput) error 
 	def := config.DefaultConfig()
 	var row store.Settings
 	return b.configMutate(ctx,
-		func(rows *configRows) {
+		func(rows *configRows) error {
 			// Derived, never taken from the caller: the connection string is what Setup switches
 			// on, so a stored backend that disagreed with it would be a lie the UI reads back.
 			ct := "kiss"
@@ -106,11 +109,116 @@ func (b *backend) SaveSettings(ctx context.Context, in api.SettingsInput) error 
 				DutyCyclePct:        in.DutyCycle,
 				PacketRetentionDays: *in.PacketRetentionDays,
 				SetupComplete:       setup,
+				FloodRegions:        rows.settings.FloodRegions, // their own endpoint
+				FloodScope:          rows.settings.FloodScope,
 			}
 			rows.settings = &row
+			return nil
 		},
 		func(st *store.Store) error { return st.Settings.Set(ctx, &row) },
 	)
+}
+
+// missingRow is a 404 for an update naming an id that isn't stored; 0 is a create.
+func missingRow[T any](rows []T, id int64, idOf func(T) int64, what string) error {
+	if id == 0 || slices.ContainsFunc(rows, func(r T) bool { return idOf(r) == id }) {
+		return nil
+	}
+	return api.Failed(http.StatusNotFound, fmt.Errorf("no %s with id %d", what, id))
+}
+
+// listedScope refuses a save that moves to a region missing from the Settings list; one left from before the list was enforced stays until changed, and loading never checks.
+func listedScope(scope, prev string, regions []store.FloodRegion) error {
+	name, ok := config.FloodScope(scope).RegionName()
+	if !ok || scope == prev || slices.ContainsFunc(regions, func(r store.FloodRegion) bool { return config.SameRegionName(r.Name, name) }) {
+		return nil
+	}
+	return api.Invalid(fmt.Errorf("region %q is not in the region list in Settings; add it there first", name))
+}
+
+// regionsStillUsed refuses dropping a region from the Settings list while the default, a companion, channel, bot or contact sends in it, naming them.
+func (b *backend) regionsStillUsed(ctx context.Context, rows *configRows, keep []store.FloodRegion, newDefault string) error {
+	listed := func(list []store.FloodRegion, name string) bool {
+		return slices.ContainsFunc(list, func(r store.FloodRegion) bool { return config.SameRegionName(r.Name, name) })
+	}
+	var users []string
+	use := func(scope, what string) {
+		if name, ok := config.FloodScope(scope).RegionName(); ok && listed(rows.settings.FloodRegions, name) && !listed(keep, name) {
+			users = append(users, fmt.Sprintf("%s (%s)", what, name))
+		}
+	}
+	use(newDefault, "the default region")
+	compName := make(map[int64]string, len(rows.companions))
+	for _, c := range rows.companions {
+		compName[c.ID] = c.Name
+		use(c.FloodScope, "companion "+c.Name)
+	}
+	for _, ch := range rows.channels {
+		use(ch.FloodScope, "channel "+ch.Name+" on "+compName[ch.CompanionID])
+	}
+	for _, t := range rows.triggers {
+		use(t.FloodScope, fmt.Sprintf("%s bot %d on %s", t.Type, t.ID, compName[t.CompanionID]))
+	}
+	contacts, err := b.db.Contacts.RegionScoped(ctx)
+	if err != nil {
+		return err
+	}
+	for _, c := range contacts {
+		use(c.FloodScope, "contact "+c.Name+" on "+compName[c.CompanionID])
+	}
+	if len(users) > 0 {
+		return api.Invalid(fmt.Errorf("a region still in use can't be removed; first change %s", strings.Join(users, ", ")))
+	}
+	return nil
+}
+
+// SaveFloodRegions replaces the region list and the default together, as the one form that edits them.
+func (b *backend) SaveFloodRegions(ctx context.Context, in api.FloodRegionsInput) error {
+	if in.Regions == nil {
+		return errors.New("regions is required")
+	}
+	if err := config.RequireScope(in.FloodScope, false); err != nil {
+		return err
+	}
+	var row store.Settings
+	return b.configMutate(ctx,
+		func(rows *configRows) error {
+			if err := listedScope(in.FloodScope, rows.settings.FloodScope, *in.Regions); err != nil {
+				return err
+			}
+			if err := b.regionsStillUsed(ctx, rows, *in.Regions, in.FloodScope); err != nil {
+				return err
+			}
+			row = *rows.settings
+			row.FloodRegions = *in.Regions
+			row.FloodScope = in.FloodScope
+			rows.settings = &row
+			return nil
+		},
+		func(st *store.Store) error { return st.Settings.Set(ctx, &row) },
+	)
+}
+
+func (b *backend) SetContactFloodScope(ctx context.Context, companionID int64, pubkey []byte, scope string) error {
+	if err := config.RequireScope(scope, true); err != nil {
+		return err
+	}
+	var err error
+	b.db.WriteSync(func() {
+		var s *store.Settings
+		if s, err = b.db.Settings.Get(ctx); err != nil {
+			return
+		}
+		prev := ""
+		if c, gerr := b.db.Contacts.Get(ctx, companionID, pubkey); gerr == nil {
+			prev = c.FloodScope
+		}
+		if err = listedScope(scope, prev, s.FloodRegions); err != nil {
+			return
+		}
+		err = b.db.Contacts.SetFloodScope(ctx, companionID, pubkey, scope)
+	})
+	return err
 }
 
 func (b *backend) SaveMqtt(ctx context.Context, in api.MqttInput) error {
@@ -123,7 +231,7 @@ func (b *backend) SaveMqtt(ctx context.Context, in api.MqttInput) error {
 		Email:           in.Email,
 	}
 	return b.configMutate(ctx,
-		func(rows *configRows) { rows.mqtt = &row },
+		func(rows *configRows) error { rows.mqtt = &row; return nil },
 		func(st *store.Store) error { return st.Mqtt.Set(ctx, &row) },
 	)
 }
@@ -131,7 +239,10 @@ func (b *backend) SaveMqtt(ctx context.Context, in api.MqttInput) error {
 func (b *backend) SaveBroker(ctx context.Context, in api.BrokerInput) (int64, error) {
 	var row store.Broker
 	err := b.configMutate(ctx,
-		func(rows *configRows) {
+		func(rows *configRows) error {
+			if err := missingRow(rows.brokers, in.ID, func(x store.Broker) int64 { return x.ID }, "broker"); err != nil {
+				return err
+			}
 			row = store.Broker{
 				ID: in.ID, Name: in.Name, Enabled: in.Enabled, Dedup: in.Dedup,
 				Transport: in.Transport, Host: in.Host, Port: in.Port,
@@ -159,6 +270,7 @@ func (b *backend) SaveBroker(ctx context.Context, in api.BrokerInput) (int64, er
 					}
 				}
 			}
+			return nil
 		},
 		func(st *store.Store) error {
 			if row.ID == 0 {
@@ -172,14 +284,18 @@ func (b *backend) SaveBroker(ctx context.Context, in api.BrokerInput) (int64, er
 
 func (b *backend) DeleteBroker(ctx context.Context, id int64) error {
 	return b.configMutate(ctx,
-		func(rows *configRows) {
+		func(rows *configRows) error {
 			rows.brokers = filterOut(rows.brokers, func(x store.Broker) bool { return x.ID == id })
+			return nil
 		},
 		func(st *store.Store) error { return st.Brokers.Delete(ctx, id) },
 	)
 }
 
 func (b *backend) SaveCompanion(ctx context.Context, in api.CompanionInput) (int64, error) {
+	if err := config.RequireScope(in.FloodScope, true); err != nil {
+		return 0, err
+	}
 	// Resolve the key up front so a generation failure surfaces before the tx.
 	key := ""
 	if in.PrivateKey != nil {
@@ -196,12 +312,23 @@ func (b *backend) SaveCompanion(ctx context.Context, in api.CompanionInput) (int
 	var row store.Companion
 	var newPublic *store.CompanionChannel
 	err := b.configMutate(ctx,
-		func(rows *configRows) {
+		func(rows *configRows) error {
+			if err := missingRow(rows.companions, in.ID, func(c store.Companion) int64 { return c.ID }, "companion"); err != nil {
+				return err
+			}
+			prev := ""
+			if i := slices.IndexFunc(rows.companions, func(c store.Companion) bool { return c.ID == in.ID }); in.ID != 0 && i >= 0 {
+				prev = rows.companions[i].FloodScope
+			}
+			if err := listedScope(in.FloodScope, prev, rows.settings.FloodRegions); err != nil {
+				return err
+			}
 			row = store.Companion{
 				ID: in.ID, Name: in.Name,
 				Latitude: in.Latitude, Longitude: in.Longitude, AdvertInterval: in.AdvertInterval,
 				PathHashSize: in.PathHashSize,
 				DMPolicy:     in.DMPolicy, DMAllow: in.DMAllow,
+				FloodScope: in.FloodScope,
 			}
 			row.PrivateKey = key
 			// Telemetry modes have their own endpoint, so an edit from any other form must carry them through.
@@ -219,7 +346,7 @@ func (b *backend) SaveCompanion(ctx context.Context, in api.CompanionInput) (int
 			if in.ID == 0 {
 				rows.companions = append(rows.companions, row)
 				// Every companion is always joined to Public.
-				newPublic = &store.CompanionChannel{Name: "Public"}
+				newPublic = &store.CompanionChannel{Name: "Public", FloodScope: string(config.ScopeInherit)}
 				rows.channels = append(rows.channels, *newPublic)
 			} else {
 				for i := range rows.companions {
@@ -228,6 +355,7 @@ func (b *backend) SaveCompanion(ctx context.Context, in api.CompanionInput) (int
 					}
 				}
 			}
+			return nil
 		},
 		func(st *store.Store) error {
 			if row.ID != 0 {
@@ -253,10 +381,12 @@ func (b *backend) SetCompanionTelemetry(ctx context.Context, id int64, in api.Co
 			return fmt.Errorf("%q is not a telemetry mode", m)
 		}
 	}
-	found := false
 	var row store.Companion
 	err := b.configMutate(ctx,
-		func(rows *configRows) {
+		func(rows *configRows) error {
+			if err := missingRow(rows.companions, id, func(c store.Companion) int64 { return c.ID }, "companion"); err != nil {
+				return err
+			}
 			for i := range rows.companions {
 				if rows.companions[i].ID != id {
 					continue
@@ -264,13 +394,11 @@ func (b *backend) SetCompanionTelemetry(ctx context.Context, id int64, in api.Co
 				rows.companions[i].TelemBase = in.Base
 				rows.companions[i].TelemLoc = in.Location
 				rows.companions[i].TelemEnv = in.Environment
-				row, found = rows.companions[i], true
+				row = rows.companions[i]
 			}
+			return nil
 		},
 		func(st *store.Store) error {
-			if !found {
-				return fmt.Errorf("no companion with id %d", id)
-			}
 			return st.Companions.Update(ctx, &row)
 		},
 	)
@@ -279,45 +407,58 @@ func (b *backend) SetCompanionTelemetry(ctx context.Context, id int64, in api.Co
 
 func (b *backend) DeleteCompanion(ctx context.Context, id int64) error {
 	return b.configMutate(ctx,
-		func(rows *configRows) {
+		func(rows *configRows) error {
 			rows.companions = filterOut(rows.companions, func(c store.Companion) bool { return c.ID == id })
 			rows.channels = filterOut(rows.channels, func(c store.CompanionChannel) bool { return c.CompanionID == id })
 			rows.triggers = filterOut(rows.triggers, func(t store.Trigger) bool { return t.CompanionID == id })
 			if rows.mqtt.NodeCompanionID != nil && *rows.mqtt.NodeCompanionID == id {
 				rows.mqtt.NodeCompanionID = nil
 			}
+			return nil
 		},
 		func(st *store.Store) error { return st.Companions.Delete(ctx, id) }, // cascade clears children
 	)
 }
 
 func (b *backend) SaveChannel(ctx context.Context, in api.ChannelInput) (int64, error) {
+	if err := config.RequireScope(in.FloodScope, true); err != nil {
+		return 0, err
+	}
 	var row store.CompanionChannel
 	err := b.configMutate(ctx,
-		func(rows *configRows) {
-			row = store.CompanionChannel{ID: in.ID, CompanionID: in.CompanionID, Name: in.Name}
-			switch {
-			case in.PrivateKey != nil:
+		func(rows *configRows) error {
+			prevScope := ""
+			if i := slices.IndexFunc(rows.channels, func(c store.CompanionChannel) bool { return c.ID == in.ID }); in.ID != 0 && i >= 0 {
+				prevScope = rows.channels[i].FloodScope
+			}
+			if err := listedScope(in.FloodScope, prevScope, rows.settings.FloodRegions); err != nil {
+				return err
+			}
+			row = store.CompanionChannel{ID: in.ID, CompanionID: in.CompanionID, Name: in.Name, FloodScope: in.FloodScope}
+			if in.PrivateKey != nil {
 				row.PrivateKey = *in.PrivateKey
-			case in.ID != 0:
-				for _, c := range rows.channels {
-					if c.ID == in.ID {
-						row.PrivateKey = c.PrivateKey
-						if row.CompanionID == 0 {
-							row.CompanionID = c.CompanionID
-						}
-					}
-				}
 			}
 			if in.ID == 0 {
-				rows.channels = append(rows.channels, row)
-			} else {
-				for i := range rows.channels {
-					if rows.channels[i].ID == in.ID {
-						rows.channels[i] = row
-					}
+				if err := config.CheckChannelName(in.Name); err != nil {
+					return api.Invalid(err)
 				}
+				rows.channels = append(rows.channels, row)
+				return nil
 			}
+			i := slices.IndexFunc(rows.channels, func(c store.CompanionChannel) bool { return c.ID == in.ID })
+			if i < 0 {
+				return api.Failed(http.StatusNotFound, fmt.Errorf("channel %d not found", in.ID))
+			}
+			prev := rows.channels[i]
+			if in.Name != prev.Name {
+				return api.Invalid(errors.New("a channel is renamed from its thread, not here"))
+			}
+			row.CompanionID = prev.CompanionID
+			if in.PrivateKey == nil {
+				row.PrivateKey = prev.PrivateKey
+			}
+			rows.channels[i] = row
+			return nil
 		},
 		func(st *store.Store) error {
 			if row.ID == 0 {
@@ -331,29 +472,54 @@ func (b *backend) SaveChannel(ctx context.Context, in api.ChannelInput) (int64, 
 
 func (b *backend) DeleteChannel(ctx context.Context, id int64) error {
 	return b.configMutate(ctx,
-		func(rows *configRows) {
+		func(rows *configRows) error {
 			rows.channels = filterOut(rows.channels, func(c store.CompanionChannel) bool { return c.ID == id })
+			return nil
 		},
 		func(st *store.Store) error { return st.Channels.Delete(ctx, id) }, // cascade clears trigger links
 	)
 }
 
 func (b *backend) SaveTrigger(ctx context.Context, in api.TriggerInput) (int64, error) {
+	if err := config.RequireScope(in.FloodScope, true); err != nil {
+		return 0, api.Invalid(err)
+	}
 	row := store.Trigger{
 		ID: in.ID, CompanionID: in.CompanionID, Type: in.Type, Template: in.Template,
 		CharLimitBehaviour: in.CharLimitBehaviour, MatchPatterns: in.Match, Contacts: in.Contacts,
 		RetryTimeout: in.RetryTimeout, MaxRetries: in.MaxRetries, PathHashSize: in.PathHashSize,
 		Schedule: in.Schedule, URL: in.URL, ChannelIDs: in.ChannelIDs,
 		FailoverPattern: in.FailoverPattern, FailoverTimeout: in.FailoverTimeout,
-		Regions: in.Regions,
+		Regions: in.Regions, FloodScope: in.FloodScope,
 	}
 	loc, err := locationFromAPI(in.Location)
 	if err != nil {
 		return 0, api.Invalid(err)
 	}
 	row.Location = locationToStore(loc)
+	if strings.TrimSpace(in.Template) == "" {
+		return 0, api.Invalid(errors.New("template is required"))
+	}
+	if in.Type == "cron" && len(in.ChannelIDs) == 0 {
+		return 0, api.Invalid(errors.New("cron trigger requires at least one channel"))
+	}
 	err = b.configMutate(ctx,
-		func(rows *configRows) {
+		func(rows *configRows) error {
+			if err := missingRow(rows.triggers, in.ID, func(t store.Trigger) int64 { return t.ID }, "bot"); err != nil {
+				return err
+			}
+			prev := ""
+			if i := slices.IndexFunc(rows.triggers, func(t store.Trigger) bool { return t.ID == in.ID }); in.ID != 0 && i >= 0 {
+				prev = rows.triggers[i].FloodScope
+			}
+			if err := listedScope(in.FloodScope, prev, rows.settings.FloodRegions); err != nil {
+				return err
+			}
+			for _, id := range in.ChannelIDs {
+				if !slices.ContainsFunc(rows.channels, func(c store.CompanionChannel) bool { return c.ID == id && c.CompanionID == in.CompanionID }) {
+					return api.Invalid(fmt.Errorf("channel %d is not one of this companion's channels", id))
+				}
+			}
 			if in.ID == 0 {
 				rows.triggers = append(rows.triggers, row)
 			} else {
@@ -363,6 +529,7 @@ func (b *backend) SaveTrigger(ctx context.Context, in api.TriggerInput) (int64, 
 					}
 				}
 			}
+			return nil
 		},
 		func(st *store.Store) error {
 			if row.ID == 0 {
@@ -381,17 +548,16 @@ func (b *backend) CreateRepeater(ctx context.Context, in api.RepeaterCreateInput
 	}
 
 	var row store.Repeater
-	exists := false
 	return b.configMutate(ctx,
-		func(rows *configRows) {
+		func(rows *configRows) error {
 			if rows.repeater != nil {
-				exists = true
-				return
+				return errors.New("repeater already configured")
 			}
 			row = store.Repeater{
 				Name:          in.Name,
 				AdminPassword: in.AdminPassword,
 				Regions:       []store.RepeaterRegion{{Name: config.WildcardRegion}},
+				FloodScope:    string(config.ScopeEverywhere),
 			}
 			if in.PrivateKey != nil && *in.PrivateKey != "" {
 				row.PrivateKey = *in.PrivateKey
@@ -400,34 +566,30 @@ func (b *backend) CreateRepeater(ctx context.Context, in api.RepeaterCreateInput
 			}
 			row.PubKey, _ = config.PubKeyHexFromSeed(row.PrivateKey)
 			rows.repeater = &row
+			return nil
 		},
 		func(st *store.Store) error {
-			if exists {
-				return errors.New("repeater already configured")
-			}
 			return st.Repeater.Set(ctx, &row)
 		},
 	)
 }
 
 // mutateRepeater applies a partial change through one validated, reloaded write; it errors when no repeater exists.
-func (b *backend) mutateRepeater(ctx context.Context, mutate func(*store.Repeater)) error {
+func (b *backend) mutateRepeater(ctx context.Context, mutate func(*store.Repeater) error) error {
 	var row store.Repeater
-	found := false
 	return b.configMutate(ctx,
-		func(rows *configRows) {
+		func(rows *configRows) error {
 			if rows.repeater == nil {
-				return
-			}
-			found = true
-			row = *rows.repeater
-			mutate(&row)
-			rows.repeater = &row
-		},
-		func(st *store.Store) error {
-			if !found {
 				return errors.New("no repeater configured")
 			}
+			row = *rows.repeater
+			if err := mutate(&row); err != nil {
+				return err
+			}
+			rows.repeater = &row
+			return nil
+		},
+		func(st *store.Store) error {
 			return st.Repeater.Set(ctx, &row)
 		},
 	)
@@ -435,7 +597,7 @@ func (b *backend) mutateRepeater(ctx context.Context, mutate func(*store.Repeate
 
 // UpdateRepeaterNode edits the Node section; a supplied key value rotates the identity.
 func (b *backend) UpdateRepeaterNode(ctx context.Context, in api.RepeaterNodeInput) error {
-	return b.mutateRepeater(ctx, func(r *store.Repeater) {
+	return b.mutateRepeater(ctx, func(r *store.Repeater) error {
 		r.Name = in.Name
 		r.Latitude = in.Latitude
 		r.Longitude = in.Longitude
@@ -443,12 +605,13 @@ func (b *backend) UpdateRepeaterNode(ctx context.Context, in api.RepeaterNodeInp
 			r.PrivateKey = *in.PrivateKey
 			r.PubKey, _ = config.PubKeyHexFromSeed(r.PrivateKey)
 		}
+		return nil
 	})
 }
 
 // UpdateRepeaterRelay edits the Relay-policy section.
 func (b *backend) UpdateRepeaterRelay(ctx context.Context, in api.RepeaterRelayInput) error {
-	return b.mutateRepeater(ctx, func(r *store.Repeater) {
+	return b.mutateRepeater(ctx, func(r *store.Repeater) error {
 		r.DisableFwd = in.DisableFwd
 		r.FloodMax = in.FloodMax
 		r.FloodMaxUnscoped = in.FloodMaxUnscoped
@@ -459,9 +622,9 @@ func (b *backend) UpdateRepeaterRelay(ctx context.Context, in api.RepeaterRelayI
 		r.DirectTxDelayFactor = in.DirectTxDelayFactor
 		r.RxDelayBase = in.RxDelayBase
 		r.MultiAcks = in.MultiAcks
-		r.DefaultRegion = in.DefaultRegion
 		r.AdvertInterval = in.AdvertInterval
 		r.FloodAdvertInterval = in.FloodAdvertInterval
+		return nil
 	})
 }
 
@@ -473,45 +636,108 @@ func (b *backend) UpdateRepeaterAdmin(ctx context.Context, in api.RepeaterAdminI
 	if in.AdminPassword != nil && strings.TrimSpace(*in.AdminPassword) == "" {
 		return errors.New("admin password cannot be blank: omit the field to keep the current one")
 	}
-	return b.mutateRepeater(ctx, func(r *store.Repeater) {
+	return b.mutateRepeater(ctx, func(r *store.Repeater) error {
 		r.OwnerInfo = in.OwnerInfo
 		r.AdminPassword = keepSecret(in.AdminPassword, r.AdminPassword)
 		r.GuestPassword = keepSecret(in.GuestPassword, r.GuestPassword)
+		return nil
 	})
 }
 
-// AddRepeaterRegion updates the deny-flood flag when the region exists, so a re-add is idempotent.
-func (b *backend) AddRepeaterRegion(ctx context.Context, in api.RepeaterRegionInput) error {
-	return b.mutateRepeater(ctx, func(r *store.Repeater) {
+// SetRepeaterFloodScope is `region default`: the scope names one of its regions, whose flood it allows, or everywhere.
+func (b *backend) SetRepeaterFloodScope(ctx context.Context, in api.RepeaterScopeInput) error {
+	if err := config.RequireScope(in.FloodScope, false); err != nil {
+		return err
+	}
+	return b.mutateRepeater(ctx, func(r *store.Repeater) error {
+		r.FloodScope = in.FloodScope
 		for i := range r.Regions {
-			if r.Regions[i].Name == in.Name {
-				r.Regions[i].DenyFlood = in.DenyFlood
-				return
+			if config.FloodScope(in.FloodScope).NamesRegion(r.Regions[i].Name) {
+				r.Regions[i].DenyFlood = false // firmware: def->flags = 0
 			}
 		}
-		r.Regions = append(r.Regions, store.RepeaterRegion{Name: in.Name, DenyFlood: in.DenyFlood})
+		return nil
 	})
+}
+
+// SetRepeaterHome sets the home region, "*" for none, as `region home` does.
+func (b *backend) SetRepeaterHome(ctx context.Context, in api.RepeaterHomeInput) error {
+	if in.Region == "" {
+		return errors.New(`region is required: "*" for none`)
+	}
+	home := in.Region
+	if home == config.WildcardRegion {
+		home = "" // home_id 0 is the wildcard
+	}
+	return b.mutateRepeater(ctx, func(r *store.Repeater) error {
+		if home != "" {
+			home = storedRegionName(r.Regions, home) // the firmware finds it with any "#" ignored; the stored name is kept
+		}
+		r.HomeRegion = home
+		return nil
+	})
+}
+
+// AddRepeaterRegion adds a new region; one that exists, "#" ignored as the firmware's lookup does, is moved with MoveRepeaterRegion instead.
+func (b *backend) AddRepeaterRegion(ctx context.Context, in api.RepeaterRegionInput) error {
+	if in.Parent == nil {
+		return errors.New(`parent is required: "*" for the top, or the region it sits under`)
+	}
+	if in.Name == config.WildcardRegion {
+		return errors.New(`"*" is the top region and always exists`)
+	}
+	return b.mutateRepeater(ctx, func(r *store.Repeater) error {
+		for _, rg := range r.Regions {
+			if config.SameRegionName(rg.Name, in.Name) {
+				return api.Failed(http.StatusConflict, fmt.Errorf("region %q already exists", rg.Name))
+			}
+		}
+		r.Regions = append(r.Regions, store.RepeaterRegion{Name: in.Name, Parent: storedRegionName(r.Regions, *in.Parent), DenyFlood: in.DenyFlood})
+		return nil
+	})
+}
+
+// MoveRepeaterRegion puts a region under another; "*" stays at the top, and a loop is refused by Validate.
+func (b *backend) MoveRepeaterRegion(ctx context.Context, name, parent string) error {
+	if name == config.WildcardRegion {
+		return errors.New(`"*" is the top region and cannot be moved`)
+	}
+	return b.mutateRepeater(ctx, func(r *store.Repeater) error {
+		for i := range r.Regions {
+			if config.SameRegionName(r.Regions[i].Name, name) {
+				r.Regions[i].Parent = storedRegionName(r.Regions, parent)
+				return nil
+			}
+		}
+		return api.Failed(http.StatusNotFound, fmt.Errorf("unknown region %q", name))
+	})
+}
+
+// storedRegionName is the region's name as stored, found as the firmware does with any "#" ignored; an unknown name is returned as given.
+func storedRegionName(regions []store.RepeaterRegion, name string) string {
+	for _, rg := range regions {
+		if config.SameRegionName(rg.Name, name) {
+			return rg.Name
+		}
+	}
+	return name
 }
 
 // SetRepeaterRegionFlood toggles a region's deny-flood flag; "*" always exists, so it is added if it has no entry.
 func (b *backend) SetRepeaterRegionFlood(ctx context.Context, name string, denyFlood bool) error {
-	found := false
-	err := b.mutateRepeater(ctx, func(r *store.Repeater) {
+	return b.mutateRepeater(ctx, func(r *store.Repeater) error {
 		for i := range r.Regions {
-			if r.Regions[i].Name == name {
+			if config.SameRegionName(r.Regions[i].Name, name) {
 				r.Regions[i].DenyFlood = denyFlood
-				found = true
+				return nil
 			}
 		}
-		if !found && name == config.WildcardRegion {
+		if name == config.WildcardRegion {
 			r.Regions = append(r.Regions, store.RepeaterRegion{Name: name, DenyFlood: denyFlood})
-			found = true
+			return nil
 		}
+		return api.Failed(http.StatusNotFound, fmt.Errorf("unknown region %q", name))
 	})
-	if err == nil && !found {
-		return fmt.Errorf("unknown region %q", name)
-	}
-	return err
 }
 
 // RemoveRepeaterRegion refuses "*", as the firmware does; denying flood on it stops relaying unscoped flood.
@@ -519,20 +745,30 @@ func (b *backend) RemoveRepeaterRegion(ctx context.Context, name string) error {
 	if name == config.WildcardRegion {
 		return errors.New(`the "*" region cannot be removed; deny flood on it instead`)
 	}
-	return b.mutateRepeater(ctx, func(r *store.Repeater) {
-		r.Regions = slices.DeleteFunc(r.Regions, func(rg store.RepeaterRegion) bool { return rg.Name == name })
-		if r.DefaultRegion == name {
-			r.DefaultRegion = ""
+	return b.mutateRepeater(ctx, func(r *store.Repeater) error {
+		if !slices.ContainsFunc(r.Regions, func(rg store.RepeaterRegion) bool { return config.SameRegionName(rg.Name, name) }) {
+			return api.Failed(http.StatusNotFound, fmt.Errorf("unknown region %q", name))
 		}
+		for _, rg := range r.Regions {
+			if config.SameRegionName(rg.Parent, name) {
+				return fmt.Errorf("region %q has sub-regions (%s); remove or move them first", name, rg.Name)
+			}
+		}
+		name := storedRegionName(r.Regions, name)
+		r.Regions = slices.DeleteFunc(r.Regions, func(rg store.RepeaterRegion) bool { return rg.Name == name })
 		if r.HomeRegion == name {
 			r.HomeRegion = ""
 		}
+		if config.FloodScope(r.FloodScope).NamesRegion(name) {
+			r.FloodScope = string(config.ScopeEverywhere) // the firmware's default_id no longer finds a region
+		}
+		return nil
 	})
 }
 
 func (b *backend) DeleteRepeater(ctx context.Context) error {
 	return b.configMutate(ctx,
-		func(rows *configRows) { rows.repeater = nil },
+		func(rows *configRows) error { rows.repeater = nil; return nil },
 		func(st *store.Store) error {
 			if err := st.RepeaterACL.Clear(ctx); err != nil { // drop admin-over-mesh clients
 				return err
@@ -552,8 +788,9 @@ func keepSecret(in *string, prev string) string {
 
 func (b *backend) DeleteTrigger(ctx context.Context, id int64) error {
 	return b.configMutate(ctx,
-		func(rows *configRows) {
+		func(rows *configRows) error {
 			rows.triggers = filterOut(rows.triggers, func(t store.Trigger) bool { return t.ID == id })
+			return nil
 		},
 		func(st *store.Store) error { return st.Triggers.Delete(ctx, id) },
 	)

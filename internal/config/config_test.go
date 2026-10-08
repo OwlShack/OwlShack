@@ -1085,10 +1085,12 @@ func TestChannelRefKeyLength(t *testing.T) {
 		wantErr bool
 	}{
 		{"", false},
-		{"00112233445566778899aabbccddeeff", false},  // 16 bytes
-		{"00112233445566778899aabbccddee", true},     // 15 bytes
-		{"00112233445566778899aabbccddeeff00", true}, // 17 bytes
-		{"zz112233445566778899aabbccddeeff", true},   // not hex
+		{"00112233445566778899aabbccddeeff", false},                                  // 16 bytes
+		{"00112233445566778899aabbccddee", true},                                     // 15 bytes
+		{"00112233445566778899aabbccddeeff00", true},                                 // 17 bytes
+		{"00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff", true},   // 32 bytes: no firmware companion takes it
+		{"00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff00", true}, // 33 bytes
+		{"zz112233445566778899aabbccddeeff", true},                                   // not hex
 	} {
 		err := (&ChannelRef{Name: "ch", PrivateKey: c.key}).Validate()
 		if (err != nil) != c.wantErr {

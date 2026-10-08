@@ -10,6 +10,8 @@ export function InlineConfirm({
   triggerLabel = "remove",
   iconOnly = false,
   ariaLabel,
+  blockedReason,
+  disabled = false,
 }: {
   confirming: boolean;
   onAskRemove: () => void;
@@ -18,7 +20,20 @@ export function InlineConfirm({
   triggerLabel?: string;
   iconOnly?: boolean;
   ariaLabel?: string;
+  // blockedReason says why the item can't be removed, in place of the confirm.
+  blockedReason?: string;
+  disabled?: boolean;
 }) {
+  if (confirming && blockedReason) {
+    return (
+      <div className="inline-flex items-center gap-1">
+        <span role="alert" className="font-mono text-[10px] text-muted-foreground mr-1">{blockedReason}</span>
+        <Button variant="ghost" size="xs" onClick={onCancel} className="font-mono uppercase tracking-widest">
+          <Check className="size-3" /> ok
+        </Button>
+      </div>
+    );
+  }
   if (confirming) {
     return (
       <div className="inline-flex items-center gap-1">
@@ -29,6 +44,7 @@ export function InlineConfirm({
           variant="destructive"
           size="xs"
           onClick={onConfirm}
+          disabled={disabled}
           className="font-mono uppercase tracking-widest"
         >
           <Check className="size-3" /> yes
@@ -50,6 +66,7 @@ export function InlineConfirm({
         variant="ghost"
         size="icon-xs"
         onClick={onAskRemove}
+        disabled={disabled}
         className="text-muted-foreground/60 hover:text-destructive"
         aria-label={ariaLabel ?? "Remove"}
       >
@@ -62,6 +79,7 @@ export function InlineConfirm({
       variant="ghost"
       size="sm"
       onClick={onAskRemove}
+      disabled={disabled}
       className="text-muted-foreground hover:text-destructive font-mono text-[10px] uppercase tracking-[0.12em]"
     >
       <Trash2 className="size-3" />

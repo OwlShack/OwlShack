@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -156,6 +157,8 @@ type repeaterCollector struct {
 	reg *companionRegistry
 	db  *store.Store
 	log *slog.Logger
+	// unanswered counts the quiet polls of each companion's node since a login went unanswered; they send one request, alternating status on the held session and a fresh login, until one answers.
+	unanswered sync.Map
 }
 
 func newRepeaterCollector(reg *companionRegistry, db *store.Store, log *slog.Logger) *repeaterCollector {
@@ -170,29 +173,51 @@ func (rc *repeaterCollector) Collect(ctx context.Context, t monitor.Target) (*mo
 	if !ok {
 		return nil, fmt.Errorf("companion %q is not running", t.CompanionID)
 	}
-	client := c.Repeaters()
+	return rc.collect(ctx, c.Repeaters(), t, c.ID(), nodeName(c, t.Pubkey))
+}
+
+// pollClient is what a poll needs from the repeater client.
+type pollClient interface {
+	Session(pubkeyHex string) *repeater.Session
+	SendLogin(pubkeyHex, password string, timeout time.Duration) (*repeater.LoginResult, error)
+	SendStatusReq(pubkeyHex string, timeout time.Duration) (*repeater.Status, error)
+	SendTelemetryReq(pubkeyHex string, timeout time.Duration) (*telemetry.Telemetry, error)
+	SendNeighborsReq(pubkeyHex string, count uint8, offset uint16, timeout time.Duration) (*repeater.Neighbors, error)
+}
+
+func (rc *repeaterCollector) collect(ctx context.Context, client pollClient, t monitor.Target, companionID int64, name string) (*monitor.CollectResult, error) {
 	pubkeyHex := hex.EncodeToString(t.Pubkey)
 
 	doStatus := probeEnabled(t.Probes, "status")
 	doTelemetry := probeEnabled(t.Probes, "telemetry")
 	doNeighbors := probeEnabled(t.Probes, "neighbors")
 
+	key := quietKey(companionID, pubkeyHex)
 	hadSession := client.Session(pubkeyHex) != nil
-	if !hadSession {
-		if err := rc.login(ctx, client, t, c.ID()); err != nil {
+	quietPolls, quiet := rc.unanswered.Load(key)
+	if quiet {
+		rc.unanswered.Store(key, quietPolls.(int)+1) // odd quiet polls log in, even ones use the held session
+	}
+	if !hadSession || quiet && quietPolls.(int)%2 == 1 {
+		if err := rc.login(ctx, client, t, companionID); err != nil {
 			return nil, fmt.Errorf("login: %w", err)
 		}
+		hadSession, quiet = false, false // just logged in, so a failed status isn't a forgotten session
 	}
 
-	res := &monitor.CollectResult{Name: nodeName(c, t.Pubkey)}
-	first := true // first radio probe drives stale-session recovery
+	res := &monitor.CollectResult{Name: name}
+	answered := false // a probe on the held session got a reply
+	first := true     // first radio probe drives stale-session recovery
+	var lastErr error
 
 	if doStatus {
 		status, err := client.SendStatusReq(pubkeyHex, monitorReqTimeout)
-		if err != nil && hadSession {
-			// A pre-existing session went stale (reboot or expiry): drop it, re-login once, retry.
-			client.Logout(pubkeyHex)
-			if lerr := rc.login(ctx, client, t, c.ID()); lerr != nil {
+		if err == nil && quiet {
+			rc.unanswered.Delete(key)
+		}
+		if err != nil && hadSession && !quiet {
+			// The node may have forgotten us (a reboot), so log in again once and retry; a login only replaces ours when it succeeds, so a node merely out of reach keeps it.
+			if lerr := rc.login(ctx, client, t, companionID); lerr != nil {
 				return nil, fmt.Errorf("re-login after stale session: %w", lerr)
 			}
 			status, err = client.SendStatusReq(pubkeyHex, monitorReqTimeout)
@@ -212,8 +237,10 @@ func (rc *repeaterCollector) Collect(ctx context.Context, t monitor.Target) (*mo
 		if tel, terr := retryProbe(ctx, rc.log, "telemetry", pubkeyHex, func() (*telemetry.Telemetry, error) {
 			return client.SendTelemetryReq(pubkeyHex, monitorReqTimeout)
 		}); terr == nil {
+			answered = true
 			res.Readings = append(res.Readings, telemetryReadings(tel)...)
 		} else {
+			lastErr = terr
 			rc.log.Debug("telemetry poll failed", "pubkey", pubkeyHex, "error", terr)
 		}
 		first = false
@@ -226,13 +253,25 @@ func (rc *repeaterCollector) Collect(ctx context.Context, t monitor.Target) (*mo
 		if nb, nerr := retryProbe(ctx, rc.log, "neighbors", pubkeyHex, func() (*repeater.Neighbors, error) {
 			return client.SendNeighborsReq(pubkeyHex, 32, 0, monitorReqTimeout)
 		}); nerr == nil {
+			answered = true
 			res.Readings = append(res.Readings, monitor.Reading{Metric: "neighbor_count", Value: float64(nb.TotalCount)})
 			res.Neighbors = neighborSamples(nb)
 		} else {
+			lastErr = nerr
 			rc.log.Debug("neighbors poll failed", "pubkey", pubkeyHex, "error", nerr)
 		}
 	}
 
+	if !doStatus && lastErr != nil && !answered {
+		// Like an unanswered status: the node is quiet, and later polls alternate the held session and a fresh login.
+		if errors.Is(lastErr, repeater.ErrNoReply) {
+			rc.unanswered.LoadOrStore(key, 0)
+		}
+		return nil, fmt.Errorf("no probe answered: %w", lastErr)
+	}
+	if quiet && answered {
+		rc.unanswered.Delete(key)
+	}
 	return res, nil
 }
 
@@ -273,13 +312,26 @@ func probeEnabled(probes []string, name string) bool {
 }
 
 // login uses the admin password stored on the contact, blank when the repeater has none.
-func (rc *repeaterCollector) login(ctx context.Context, client *repeater.Client, t monitor.Target, companionID int64) error {
+func (rc *repeaterCollector) login(ctx context.Context, client pollClient, t monitor.Target, companionID int64) error {
 	password := ""
 	if contact, err := rc.db.Contacts.Get(ctx, companionID, t.Pubkey); err == nil && contact != nil {
 		password = contact.Metadata.RepeaterPassword
 	}
-	_, err := client.SendLogin(hex.EncodeToString(t.Pubkey), password, monitorLoginTimeout)
-	return err
+	pubkeyHex := hex.EncodeToString(t.Pubkey)
+	key := quietKey(companionID, pubkeyHex)
+	if _, err := client.SendLogin(pubkeyHex, password, monitorLoginTimeout); err != nil {
+		if errors.Is(err, repeater.ErrNoReply) {
+			rc.unanswered.LoadOrStore(key, 0)
+		}
+		return err
+	}
+	rc.unanswered.Delete(key)
+	return nil
+}
+
+// quietKey is per companion, as each companion's client holds its own session.
+func quietKey(companionID int64, pubkeyHex string) string {
+	return fmt.Sprintf("%d/%s", companionID, pubkeyHex)
 }
 
 // nodeName returns "" when the name is unknown, in which case node_state keeps its previous one.

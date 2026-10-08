@@ -236,7 +236,6 @@ is the place to look.
 - Settings-section CLI `get`s run sequentially on purpose (half-duplex radio), though the client *could* correlate concurrent commands.
 - Go tests cover 23 packages; radio-facing paths are still manual. No frontend tests.
 - `MESHCORE_APP_FEATURES.md` is referenced by the docs but does not exist in the repo.
-- MQTT publishes RX packets only, never TX — see [docs/mqtt-and-radio.md](./docs/mqtt-and-radio.md).
 
 ## Feature ideas not yet started
 

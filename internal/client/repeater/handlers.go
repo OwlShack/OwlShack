@@ -8,7 +8,6 @@ import (
 	"time"
 
 	meshcore "github.com/OwlShack/meshcore-go"
-	"github.com/OwlShack/meshcore-go/node"
 
 	"github.com/OwlShack/OwlShack/internal/meshpath"
 )
@@ -332,7 +331,7 @@ func (rm *Client) sendReciprocalPath(pkt *meshcore.Packet, peerPubKey, secret, l
 		return
 	}
 	meshpath.Direct(rpath, learnedPath, hashSize)
-	if err := rm.node.SendPacketDelayed(rpath, node.PriorityFloodRelay, reciprocalPathDelay); err != nil {
+	if err := meshpath.Send(rm.node, rpath, nil, reciprocalPathDelay); err != nil {
 		rm.log.Debug("failed to send reciprocal path return", "error", err)
 		return
 	}
@@ -358,7 +357,7 @@ func (rm *Client) retryReciprocalPath(pkt *meshcore.Packet, peerPubKey [32]byte,
 		return
 	}
 	meshpath.Direct(rpath, outPath, hashSize)
-	if err := rm.node.SendPacketDelayed(rpath, node.PriorityFloodRelay, returnPathRetryDelay); err != nil {
+	if err := meshpath.Send(rm.node, rpath, nil, returnPathRetryDelay); err != nil {
 		rm.log.Debug("failed to send return path retry", "error", err)
 		return
 	}

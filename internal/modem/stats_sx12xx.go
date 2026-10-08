@@ -50,9 +50,8 @@ func (p *sx12xxStatsProvider) CachedStats() DeviceStats { return p.Stats(context
 func (p *sx12xxStatsProvider) Stats(context.Context) DeviceStats {
 	ds := DeviceStats{UptimeSecs: uint32(time.Since(p.startTime).Seconds())}
 	if m := p.modem.Load(); m != nil {
-		if nf, ok := m.NoiseFloor(); ok {
-			ds.NoiseFloor = int16(nf)
-		}
+		nf, ok := m.NoiseFloor()
+		ds.NoiseFloor, ds.HaveNoiseFloor = int16(nf), ok
 	}
 	return ds
 }

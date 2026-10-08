@@ -7,7 +7,6 @@ import (
 	"time"
 
 	meshcore "github.com/OwlShack/meshcore-go"
-	"github.com/OwlShack/meshcore-go/node"
 )
 
 // Node discovery (firmware CTL_TYPE_NODE_DISCOVER_REQ/RESP): a zero-hop request whose matching responses become neighbours.
@@ -43,7 +42,7 @@ func (r *Repeater) sendDiscover() error {
 	return r.sendPkt(&meshcore.Packet{
 		Header:  meshcore.MakeHeader(meshcore.RouteTypeDirect, meshcore.PayloadTypeControl, 0),
 		Payload: payload,
-	}, node.PrioritySend, 0)
+	}, nil, 0)
 }
 
 func (r *Repeater) SendDiscover() error { return r.sendDiscover() }
@@ -100,7 +99,7 @@ func (r *Repeater) answerDiscover(pkt *meshcore.Packet, ctl *meshcore.Control) {
 	if err := r.sendPkt(&meshcore.Packet{
 		Header:  meshcore.MakeHeader(meshcore.RouteTypeDirect, meshcore.PayloadTypeControl, 0),
 		Payload: payload,
-	}, node.PrioritySend, delay); err != nil {
+	}, nil, delay); err != nil {
 		r.log.Error("discover response failed", "error", err)
 	}
 }

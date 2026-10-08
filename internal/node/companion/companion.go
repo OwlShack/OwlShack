@@ -73,6 +73,13 @@ type Companion struct {
 
 	traceWaiters traceWaiters
 
+	// floodScopeOf names the region a received packet carried; the app's knows the region list.
+	floodScopeOf func(*meshcore.Packet) string
+
+	// chanScopes is each channel's own region choice, keyed by the node's channel name; channel edits run beside sends.
+	chanScopesMu sync.Mutex
+	chanScopes   map[string]config.FloodScope
+
 	// dmSeen collapses a sender's retransmissions of one message; see recentDM.
 	dmSeen dmSeen
 
@@ -87,7 +94,7 @@ type Companion struct {
 	runCtx context.Context
 }
 
-func NewCompanion(cfg config.CompanionConfig, mux *node.RadioMux, st *store.Store, hub *api.Hub, echoTracker *echo.Tracker, stats modem.StatsProvider, parseErrors *atomic.Uint64, nodeOpts ...node.Option) (*Companion, error) {
+func NewCompanion(cfg config.CompanionConfig, mux *node.RadioMux, st *store.Store, hub *api.Hub, echoTracker *echo.Tracker, stats modem.StatsProvider, parseErrors *atomic.Uint64, floodScopeOf func(*meshcore.Packet) string, nodeOpts ...node.Option) (*Companion, error) {
 	name := strings.TrimSpace(cfg.Name)
 	if name == "" {
 		return nil, fmt.Errorf("companion name is required")
@@ -114,19 +121,22 @@ func NewCompanion(cfg config.CompanionConfig, mux *node.RadioMux, st *store.Stor
 
 	companion := &Companion{
 		// RX handlers are live before Start sets the real one, and a DM in between must not query with a nil context.
-		runCtx:      context.Background(),
-		cfg:         cfg,
-		node:        n,
-		radio:       &radio,
-		mux:         mux,
-		templater:   trigger.NewTemplater(),
-		log:         log,
-		store:       st,
-		hub:         hub,
-		echoTracker: echoTracker,
-		stats:       stats,
+		runCtx:       context.Background(),
+		cfg:          cfg,
+		node:         n,
+		radio:        &radio,
+		mux:          mux,
+		templater:    trigger.NewTemplater(),
+		log:          log,
+		store:        st,
+		hub:          hub,
+		echoTracker:  echoTracker,
+		stats:        stats,
+		chanScopes:   make(map[string]config.FloodScope),
+		floodScopeOf: floodScopeOf,
 	}
-	companion.repeaters = repeater.NewClient(n, st, cfg.ID, log, stats, companion.pathHashSize)
+	companion.repeaters = repeater.NewClient(n, st, cfg.ID, log, stats, companion.pathHashSize,
+		func(pubkey []byte) *meshcore.Region { return companion.contactScope(pubkey).MeshRegion() })
 
 	// The companion's channels are the only ones this node listens on; triggers reference them by name and register none of their own.
 	if cfg.Channels != nil {
@@ -136,6 +146,7 @@ func NewCompanion(cfg config.CompanionConfig, mux *node.RadioMux, st *store.Stor
 				return nil, fmt.Errorf("channel %q: %w", chRef.Name, err)
 			}
 			n.SetChannel(i, ch)
+			companion.chanScopes[ch.Name] = chRef.FloodScope
 		}
 	}
 

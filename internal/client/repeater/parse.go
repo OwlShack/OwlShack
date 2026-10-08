@@ -61,7 +61,7 @@ type Status struct {
 
 func parseRepeaterNeighbors(data []byte, prefixLen int) (*Neighbors, error) {
 	if len(data) < 4 {
-		return nil, fmt.Errorf("neighbors data too short: got %d", len(data))
+		return nil, fmt.Errorf("%w: neighbors data too short: got %d", ErrBadReply, len(data))
 	}
 	out := &Neighbors{
 		TotalCount:   int(int16(binary.LittleEndian.Uint16(data[0:2]))),
@@ -119,7 +119,7 @@ func parseRepeaterOwnerInfo(data []byte) *OwnerInfo {
 // parseRoomStatus: bytes 48-52 are n_posted and n_post_push (u16 each) where a repeater carries rx_air_time_secs.
 func parseRoomStatus(data []byte) (*Status, error) {
 	if len(data) < 52 {
-		return nil, fmt.Errorf("room status data too short: got %d, need 52", len(data))
+		return nil, fmt.Errorf("%w: room status data too short: got %d, need 52", ErrBadReply, len(data))
 	}
 	s := parseCommonStats(data)
 	posted := binary.LittleEndian.Uint16(data[48:50])
@@ -152,7 +152,7 @@ func parseCommonStats(data []byte) *Status {
 
 func parseRepeaterStatus(data []byte) (*Status, error) {
 	if len(data) < 52 {
-		return nil, fmt.Errorf("status data too short: got %d, need at least 52", len(data))
+		return nil, fmt.Errorf("%w: status data too short: got %d, need at least 52", ErrBadReply, len(data))
 	}
 
 	s := &Status{

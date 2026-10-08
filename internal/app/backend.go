@@ -3,11 +3,14 @@ package app
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"time"
 
 	"github.com/OwlShack/OwlShack/internal/api"
+	repeaterclient "github.com/OwlShack/OwlShack/internal/client/repeater"
 	"github.com/OwlShack/OwlShack/internal/config"
 	"github.com/OwlShack/OwlShack/internal/discover"
 	"github.com/OwlShack/OwlShack/internal/modem"
@@ -41,6 +44,7 @@ type backend struct {
 	telemetry *telemetryPublisher
 	// feedPreview keeps what a bot Test fetched across radio generations, so a reconnect mid-edit does not refetch.
 	feedPreview *trigger.FeedPreview
+	regionScan  *regionScanner
 }
 
 func (b *backend) find(name string) (*companion.Companion, bool) {
@@ -77,6 +81,8 @@ func (b *backend) Companions() []api.CompanionInfo {
 }
 
 // ChannelByHash resolves against live channels, so a new channel is visible without rebuilding the backend.
+func (b *backend) FloodScopeOf(pkt *meshcore.Packet) string { return floodScopeOf(pkt) }
+
 func (b *backend) ChannelByHash(hash byte) *api.ChannelInfo {
 	for _, c := range b.companions {
 		for _, ch := range c.Node().Channels() {
@@ -121,7 +127,21 @@ func (b *backend) Companion(name string) (api.MessageSender, api.DMSender, bool)
 	if !ok {
 		return nil, nil, false
 	}
-	return c.SendChannelMessage, c.SendContactMessage, true
+	return func(ch, text string) error { return sendErr(c.SendChannelMessage(ch, text)) },
+		func(pubkeyHex, text string) error { return sendErr(c.SendContactMessage(pubkeyHex, text)) }, true
+}
+
+// sendErr gives a refused send the status the operator can act on: a full queue is busy, a text too long is the request's fault.
+func sendErr(err error) error {
+	switch {
+	case errors.Is(err, node.ErrTxQueueFull):
+		return api.Failed(http.StatusServiceUnavailable, err)
+	case errors.Is(err, node.ErrTextTooLong):
+		return api.Failed(http.StatusUnprocessableEntity, err)
+	case errors.Is(err, companion.ErrUnknownChannel):
+		return api.Failed(http.StatusNotFound, err)
+	}
+	return err
 }
 
 func (b *backend) ChannelMutator(name string) (api.ChannelAdder, api.ChannelRemover, bool) {
@@ -138,7 +158,7 @@ func (b *backend) ChannelMutator(name string) (api.ChannelAdder, api.ChannelRemo
 func (b *backend) RenameChannel(companionName, oldName, newName string) error {
 	c, ok := b.find(companionName)
 	if !ok {
-		return fmt.Errorf("companion %q not found", companionName)
+		return api.Failed(http.StatusNotFound, fmt.Errorf("companion %q not found", companionName))
 	}
 	return c.RenameChannel(oldName, newName)
 }
@@ -167,16 +187,19 @@ func (b *backend) Repeater(name string) (*api.RepeaterOps, bool) {
 	rm := c.Repeaters()
 	return &api.RepeaterOps{
 		Login: func(pubkeyHex, password string) (any, error) {
-			return rm.SendLogin(pubkeyHex, password, repeaterReqTimeout)
+			return remote(rm.SendLogin(pubkeyHex, password, repeaterReqTimeout))
 		},
 		RoomLogin: func(pubkeyHex, password string, syncSince uint32) (any, error) {
-			return rm.SendRoomLogin(pubkeyHex, password, syncSince, repeaterReqTimeout)
+			return remote(rm.SendRoomLogin(pubkeyHex, password, syncSince, repeaterReqTimeout))
 		},
 		StatusReq: func(pubkeyHex string) (any, error) {
-			return rm.SendStatusReq(pubkeyHex, repeaterReqTimeout)
+			return remote(rm.SendStatusReq(pubkeyHex, repeaterReqTimeout))
 		},
 		CLI: func(pubkeyHex, command string) (string, error) {
-			return rm.SendCLI(pubkeyHex, command, repeaterReqTimeout)
+			return remote(rm.SendCLI(pubkeyHex, command, repeaterReqTimeout))
+		},
+		Regions: func(ctx context.Context, pubkeyHex string) (any, error) {
+			return remote(rm.ReadRegions(ctx, pubkeyHex, repeaterReqTimeout))
 		},
 		Session: func(pubkeyHex string) any {
 			return rm.Session(pubkeyHex)
@@ -185,40 +208,75 @@ func (b *backend) Repeater(name string) (*api.RepeaterOps, bool) {
 			rm.Logout(pubkeyHex)
 		},
 		PathGet: func(pubkeyHex string) (any, error) {
-			return rm.GetPeerPath(pubkeyHex)
+			return remote(rm.GetPeerPath(pubkeyHex))
 		},
 		PathReset: func(pubkeyHex string) error {
-			return rm.ResetPeerPath(pubkeyHex)
+			return remoteErr(rm.ResetPeerPath(pubkeyHex))
 		},
-		PathSet: rm.SetPeerPath,
+		PathSet: func(pubkeyHex string, path []byte, pathHashSize uint8) error {
+			return remoteErr(rm.SetPeerPath(pubkeyHex, path, pathHashSize))
+		},
 		NeighborsReq: func(pubkeyHex string, count uint8, offset uint16) (any, error) {
-			return rm.SendNeighborsReq(pubkeyHex, count, offset, repeaterReqTimeout)
+			return remote(rm.SendNeighborsReq(pubkeyHex, count, offset, repeaterReqTimeout))
 		},
 		OwnerInfoReq: func(pubkeyHex string) (any, error) {
-			return rm.SendOwnerInfoReq(pubkeyHex, repeaterReqTimeout)
+			return remote(rm.SendOwnerInfoReq(pubkeyHex, repeaterReqTimeout))
 		},
 		TelemetryReq: func(pubkeyHex string) (any, error) {
-			return rm.SendTelemetryReq(pubkeyHex, repeaterReqTimeout)
+			return remote(rm.SendTelemetryReq(pubkeyHex, repeaterReqTimeout))
 		},
 		RoomStatusReq: func(pubkeyHex string) (any, error) {
-			return rm.SendRoomStatusReq(pubkeyHex, repeaterReqTimeout)
+			return remote(rm.SendRoomStatusReq(pubkeyHex, repeaterReqTimeout))
 		},
 		RoomKeepAlive: func(pubkeyHex string, since uint32) error {
-			return rm.SendRoomKeepAlive(pubkeyHex, since)
+			return remoteErr(rm.SendRoomKeepAlive(pubkeyHex, since))
 		},
 		SeriesReq: func(pubkeyHex string, startSecsAgo, endSecsAgo uint32) (any, error) {
-			return rm.SendSeriesReq(pubkeyHex, startSecsAgo, endSecsAgo, repeaterReqTimeout)
+			return remote(rm.SendSeriesReq(pubkeyHex, startSecsAgo, endSecsAgo, repeaterReqTimeout))
 		},
 		ContactTelemetryReq: func(pubkeyHex string) (any, error) {
-			return rm.SendContactTelemetryReq(pubkeyHex, repeaterReqTimeout)
+			return remote(rm.SendContactTelemetryReq(pubkeyHex, repeaterReqTimeout))
 		},
 		AccessList: func(pubkeyHex string) (any, error) {
-			return rm.SendAccessListReq(pubkeyHex, repeaterReqTimeout)
+			return remote(rm.SendAccessListReq(pubkeyHex, repeaterReqTimeout))
 		},
 		SetPerm: func(pubkeyHex, targetPubkeyHex string, perms uint8) error {
-			return rm.SetAccessPerm(pubkeyHex, targetPubkeyHex, perms, repeaterReqTimeout)
+			return remoteErr(rm.SetAccessPerm(pubkeyHex, targetPubkeyHex, perms, repeaterReqTimeout))
 		},
 	}, true
+}
+
+// remote passes a remote request's result through remoteErr.
+func remote[T any](v T, err error) (T, error) { return v, remoteErr(err) }
+
+// remoteErr gives a remote request's failure the status that says what to do about it; anything else stays the server's.
+func remoteErr(err error) error {
+	status := 0
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, repeaterclient.ErrRejected), errors.Is(err, repeaterclient.ErrRegionLoad), errors.Is(err, repeaterclient.ErrNoRegions):
+		return api.Invalid(err)
+	case errors.Is(err, repeaterclient.ErrBadPubkey):
+		status = http.StatusBadRequest
+	case errors.Is(err, repeaterclient.ErrUnknownPeer):
+		status = http.StatusNotFound
+	case errors.Is(err, repeaterclient.ErrNotLoggedIn):
+		status = http.StatusUnauthorized
+	case errors.Is(err, repeaterclient.ErrNotAdmin):
+		status = http.StatusForbidden
+	case errors.Is(err, repeaterclient.ErrNoDirectRoute):
+		status = http.StatusConflict
+	case errors.Is(err, repeaterclient.ErrBadReply):
+		status = http.StatusBadGateway
+	case errors.Is(err, repeaterclient.ErrBusy):
+		status = http.StatusServiceUnavailable
+	case errors.Is(err, repeaterclient.ErrNoReply):
+		status = http.StatusGatewayTimeout
+	default:
+		return err
+	}
+	return api.Failed(status, err)
 }
 
 // MqttStatus finds the one companion running the MQTT observer.
@@ -276,35 +334,36 @@ func (b *backend) RepeaterNode() (*api.RepeaterNodeOps, bool) {
 	}, true
 }
 
-// PersistChannels writes each companion's standalone channels back, leaving the rest of the config intact.
+// PersistChannels writes each companion's standalone channels back, leaving the rest of the config intact; it reads and writes in one writer turn, so a save in between isn't lost.
 func (b *backend) PersistChannels(ctx context.Context) error {
-	cfg, err := loadConfigFromDB(ctx, b.db)
-	if err != nil {
-		return fmt.Errorf("reading config for persist: %w", err)
-	}
-
-	byName := make(map[string]int, len(cfg.Companions))
-	for i, cc := range cfg.Companions {
-		byName[cc.Name] = i
-	}
-	for _, comp := range b.companions {
-		i, ok := byName[comp.Name()]
-		if !ok {
-			continue
+	var werr error
+	b.db.WriteSync(func() {
+		cfg, err := readConfigFromTables(ctx, b.db)
+		if err != nil {
+			werr = fmt.Errorf("reading config for persist: %w", err)
+			return
 		}
-		channels := comp.StandaloneChannels()
-		if len(channels) > 0 {
-			cl := config.ChannelList(channels)
-			cfg.Companions[i].Channels = &cl
-		} else {
-			cfg.Companions[i].Channels = nil
+		byName := make(map[string]int, len(cfg.Companions))
+		for i, cc := range cfg.Companions {
+			byName[cc.Name] = i
 		}
+		for _, comp := range b.companions {
+			i, ok := byName[comp.Name()]
+			if !ok {
+				continue
+			}
+			if channels := comp.StandaloneChannels(); len(channels) > 0 {
+				cl := config.ChannelList(channels)
+				cfg.Companions[i].Channels = &cl
+			} else {
+				cfg.Companions[i].Channels = nil
+			}
+		}
+		werr = writeConfigToTables(ctx, b.db, cfg)
+	})
+	if werr != nil {
+		return werr
 	}
-
-	if err := saveConfig(ctx, b.db, cfg); err != nil {
-		return err
-	}
-
 	slog.Info("config persisted with channel changes")
 	return nil
 }
@@ -386,7 +445,8 @@ func (b *backend) radioStats(poll bool) (api.RadioStatsInfo, bool) {
 		c := ds.MCUTempC
 		out.MCUTempC = &c
 	}
-	if nf := ds.NoiseFloor; nf != 0 {
+	if ds.HaveNoiseFloor {
+		nf := ds.NoiseFloor
 		out.NoiseFloor = &nf
 	}
 

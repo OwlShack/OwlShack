@@ -34,6 +34,9 @@ type TriggerConfig struct {
 	// Path Hash Size: 1-4 = fixed size, 0 = mirror incoming packet's hash size, nil = default (1)
 	PathHashSize *uint8 `json:"pathHashSize,omitempty" yaml:"pathHashSize,omitempty" toml:"pathHashSize,omitempty"`
 
+	// FloodScope is the region the bot posts in; inherit takes the channel's or contact's.
+	FloodScope FloodScope `json:"floodScope,omitempty" yaml:"floodScope,omitempty" toml:"floodScope,omitempty"`
+
 	Schedule string `json:"schedule,omitempty" yaml:"schedule,omitempty" toml:"schedule,omitempty"`
 
 	URL string `json:"url,omitempty" yaml:"url,omitempty" toml:"url,omitempty"` // Feed to poll, for rss and cap triggers
@@ -83,6 +86,9 @@ func (t *TriggerConfig) mirrorsIncoming() bool {
 
 // Validate rejects trigger configs that would fail companion construction, which after a reload exits the process.
 func (t *TriggerConfig) Validate() error {
+	if err := t.FloodScope.Validate(true); err != nil {
+		return fmt.Errorf("floodScope: %w", err)
+	}
 	switch t.Type {
 	case "channel", "group":
 		if t.Channels == nil || len(*t.Channels) == 0 {
@@ -275,16 +281,30 @@ func validateFeedSchedule(spec string) error {
 	return nil
 }
 
+// CheckChannelName is the rule for a channel name the API is given; it's not in Validate, so a name stored before it still loads.
+func CheckChannelName(name string) error {
+	switch {
+	case strings.TrimSpace(name) == "":
+		return fmt.Errorf("channel name is required")
+	case strings.TrimSpace(name) != name:
+		return fmt.Errorf("channel name %q has spaces at its start or end", name)
+	}
+	return nil
+}
+
 func (cr *ChannelRef) Validate() error {
 	if cr.Name == "" {
 		return fmt.Errorf("channel name is required")
+	}
+	if err := cr.FloodScope.Validate(true); err != nil {
+		return fmt.Errorf("channel %q floodScope: %w", cr.Name, err)
 	}
 	if cr.PrivateKey != "" {
 		psk, err := hex.DecodeString(cr.PrivateKey)
 		if err != nil {
 			return fmt.Errorf("channel %q: privateKey must be hex: %w", cr.Name, err)
 		}
-		// NewChannelFromPSK rejects any other length at companion construction, which exits the process.
+		// Firmware companions and the MeshCore app take only 128-bit channel keys, so a longer one would make a channel no phone can join.
 		if len(psk) != 16 {
 			return fmt.Errorf("channel %q: privateKey must be 16 bytes (32 hex chars), got %d bytes", cr.Name, len(psk))
 		}

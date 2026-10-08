@@ -3,7 +3,9 @@ import { useNavigate } from "react-router-dom";
 import {
   Ban,
   ClipboardCopy,
+  DoorOpen,
   Info,
+  MapPin,
   MoreVertical,
   Pencil,
   Route,
@@ -18,6 +20,12 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PathDialog } from "@/components/PathDialog";
+import { ChannelShare } from "@/components/ChannelShare";
+import { RegionSelect, regionName, useCompanionScope, useRegionSettings } from "@/components/RegionSelect";
+import { useApiList } from "@/hooks/useApiList";
+import { useApiObject } from "@/hooks/useApiObject";
+import { configApi, request, type ConfigChannel, type FloodScope } from "@/lib/configApi";
+import { contactDetailPath } from "@/lib/routes";
 import {
   Dialog,
   DialogContent,
@@ -39,17 +47,23 @@ interface Conversation {
   name: string;
   channel: string;
   pubkey?: string;
+  peerType?: string;
 }
 
 interface ChatHeaderMenuProps {
   companion: string;
+  companionId: number | null;
   conversation: Conversation;
+  // sendScope is the region this thread's sends go in, which a shared channel carries.
+  sendScope: FloodScope;
   onSearchToggle: () => void;
   onMessagesCleared: () => void;
+  onRegionChanged: () => void;
 }
 
 type DialogKind =
   | "share"
+  | "region"
   | "rename"
   | "participants"
   | "blocked"
@@ -59,9 +73,12 @@ type DialogKind =
 
 export function ChatHeaderMenu({
   companion,
+  companionId,
   conversation,
+  sendScope,
   onSearchToggle,
   onMessagesCleared,
+  onRegionChanged,
 }: ChatHeaderMenuProps) {
   const [dialog, setDialog] = useState<DialogKind>(null);
   const navigate = useNavigate();
@@ -72,6 +89,7 @@ export function ChatHeaderMenu({
       conversation.channel.toLowerCase() === "public");
   const isChannel = conversation.type === "channel";
   const isContact = conversation.type === "contact";
+  const managed = conversation.pubkey && ["ROOM", "SENSOR"].includes(conversation.peerType?.toUpperCase() ?? "");
 
   return (
     <>
@@ -101,6 +119,24 @@ export function ChatHeaderMenu({
             <Share2 className="size-3.5" />
             Share
           </DropdownMenuItem>
+
+          <DropdownMenuItem
+            onClick={() => setDialog("region")}
+            className="font-mono text-xs uppercase tracking-[0.08em] rounded-none"
+          >
+            <MapPin className="size-3.5" />
+            Region
+          </DropdownMenuItem>
+
+          {managed && (
+            <DropdownMenuItem
+              onClick={() => navigate(contactDetailPath(companion, conversation.pubkey!, conversation.peerType))}
+              className="font-mono text-xs uppercase tracking-[0.08em] rounded-none"
+            >
+              <DoorOpen className="size-3.5" />
+              Manage
+            </DropdownMenuItem>
+          )}
 
           {isPublicChannel && (
             <DropdownMenuItem
@@ -176,7 +212,17 @@ export function ChatHeaderMenu({
         onClose={() => setDialog(null)}
         companion={companion}
         conversation={conversation}
+        region={regionName(sendScope)}
       />
+      {dialog === "region" && (
+        <ThreadRegionDialog
+          onClose={() => setDialog(null)}
+          companion={companion}
+          companionId={companionId}
+          conversation={conversation}
+          onSaved={onRegionChanged}
+        />
+      )}
       <RenameDialog
         open={dialog === "rename"}
         onClose={() => setDialog(null)}
@@ -215,168 +261,182 @@ export function ChatHeaderMenu({
   );
 }
 
+// The MeshCore app's contact types: a shared link adds the node as the right kind.
+const contactType: Record<string, number> = { CHAT: 1, REPEATER: 2, ROOM: 3, SENSOR: 4 };
+
 function ShareDialog({
   open,
   onClose,
   companion,
   conversation,
+  region,
 }: {
   open: boolean;
   onClose: () => void;
   companion: string;
   conversation: Conversation;
+  region: string | null;
 }) {
-  const [channelKey, setChannelKey] = useState<string | null>(null);
+  const [channelKey, setChannelKey] = useState<{ name: string; key: string } | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
 
   const isChannel = conversation.type === "channel";
   const isContact = conversation.type === "contact";
+  const pubkey = conversation.pubkey || "";
+  const type = contactType[conversation.peerType?.toUpperCase() ?? ""] ?? 1;
 
   useEffect(() => {
-    if (!open) return;
-    if (isContact) {
-      setChannelKey(null);
-      const pubkey = conversation.pubkey || "";
-      if (pubkey) {
-        const qrContent = `meshcore://contact/add?name=${encodeURIComponent(conversation.name)}&public_key=${pubkey}&type=1`;
-        QRCode.toDataURL(qrContent, {
-          width: 200,
-          margin: 2,
-          color: { dark: "#000000", light: "#ffffff" },
-        })
-          .then(setQrDataUrl)
-          .catch(() => setQrDataUrl(null));
-      } else {
-        setQrDataUrl(null);
-      }
-      return;
-    }
-    if (!isChannel) {
-      setChannelKey(null);
+    if (!open || !isContact || !pubkey) {
       setQrDataUrl(null);
       return;
     }
-    fetch(
-      `/api/companions/${encodeURIComponent(companion)}/channels/${encodeURIComponent(conversation.name)}/key`,
-    )
+    const q = new URLSearchParams({ name: conversation.name, public_key: pubkey, type: String(type) });
+    QRCode.toDataURL(`meshcore://contact/add?${q}`, { width: 200, margin: 2, color: { dark: "#000000", light: "#ffffff" } })
+      .then(setQrDataUrl)
+      .catch(() => setQrDataUrl(null));
+  }, [open, isContact, pubkey, conversation.name, type]);
+
+  useEffect(() => {
+    if (!open || !isChannel) {
+      setChannelKey(null);
+      return;
+    }
+    fetch(`/api/companions/${encodeURIComponent(companion)}/channels/${encodeURIComponent(conversation.name)}/key`)
       .then((r) => {
         if (!r.ok) throw new Error("fetch key");
-        return r.json();
+        return r.json() as Promise<{ name: string; key: string }>;
       })
-      .then((data: { name: string; key: string }) => {
-        setChannelKey(data.key);
-        const qrContent = `meshcore://channel/add?name=${encodeURIComponent(data.name)}&secret=${data.key}`;
-        QRCode.toDataURL(qrContent, {
-          width: 200,
-          margin: 2,
-          color: { dark: "#000000", light: "#ffffff" },
-        }).then(setQrDataUrl);
-      })
-      .catch(() => {
-        toast.error("Failed to load channel key");
-      });
-  }, [open, isChannel, isContact, companion, conversation.name, conversation.pubkey]);
-
-  const copyKey = useCallback(async () => {
-    if (!channelKey) return;
-    try {
-      await navigator.clipboard.writeText(channelKey);
-      toast.success("Key copied to clipboard");
-    } catch {
-      toast.error("Copy failed");
-    }
-  }, [channelKey]);
-
-  const contactShareText = conversation.pubkey || "";
+      .then(setChannelKey)
+      .catch(() => toast.error("Could not load the channel key"));
+  }, [open, isChannel, companion, conversation.name]);
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="rounded-none border-border bg-card max-w-sm">
         <DialogHeader>
-          <DialogTitle className="font-mono text-sm uppercase tracking-[0.12em]">
-            Share
-          </DialogTitle>
+          <DialogTitle className="font-mono text-sm uppercase tracking-[0.12em]">Share</DialogTitle>
           <DialogDescription className="font-mono text-xs text-muted-foreground">
-            {isChannel ? "Share this channel" : "Share this contact"}
+            {isChannel ? `Share ${conversation.name}` : `Share ${conversation.name}'s contact`}
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-4">
-          {qrDataUrl && (
-            <div className="flex justify-center">
-              <img
-                src={qrDataUrl}
-                alt="QR Code"
-                className="size-48 border border-border"
-              />
-            </div>
-          )}
-
-          <div className="text-center space-y-1">
-            <p className="font-mono text-sm font-semibold">
-              {conversation.name}
-            </p>
-            {isChannel && (
-              <>
-                <p className="font-mono text-xs text-muted-foreground">
-                  Scan the QR Code to add channel
-                </p>
-                <p className="font-mono text-[10px] text-muted-foreground/70 uppercase tracking-[0.08em]">
-                  Menu &rarr; Add Channel &rarr; Scan QR Code
-                </p>
-              </>
+        {isChannel && channelKey && <ChannelShare name={channelKey.name} keyHex={channelKey.key} region={region} />}
+        {isContact && pubkey && (
+          <div className="space-y-3">
+            {qrDataUrl && (
+              <div className="flex justify-center">
+                <img src={qrDataUrl} alt={`QR code to add ${conversation.name}`} className="size-48 border border-border" />
+              </div>
             )}
+            <div className="flex items-center gap-2">
+              <code className="min-w-0 flex-1 break-all border border-border bg-background p-2 font-mono text-[11px] select-all">
+                {pubkey}
+              </code>
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label="Copy public key"
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(pubkey);
+                    toast.success("Public key copied");
+                  } catch {
+                    toast.error("Copy failed: select the key and copy it");
+                  }
+                }}
+                className="h-8 shrink-0 rounded-none"
+              >
+                <ClipboardCopy className="size-3.5" />
+              </Button>
+            </div>
+            <p className="font-mono text-[10px] text-muted-foreground/70">
+              Share this public key so others can add this contact.
+            </p>
           </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
 
-          {isChannel && channelKey && (
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <code className="flex-1 font-mono text-[11px] p-2 bg-background border border-border truncate select-all">
-                  {channelKey}
-                </code>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={copyKey}
-                  className="rounded-none h-8 shrink-0"
-                >
-                  <ClipboardCopy className="size-3.5" />
-                </Button>
-              </div>
-              <p className="font-mono text-[10px] text-muted-foreground/70">
-                Anyone with the secret key can send and receive messages in this
-                channel.
-              </p>
-            </div>
-          )}
+// ThreadRegionDialog sets the region a thread's sends flood in: the channel's, or the contact's for a DM or room; mounted only while open.
+function ThreadRegionDialog({
+  onClose,
+  companion,
+  companionId,
+  conversation,
+  onSaved,
+}: {
+  onClose: () => void;
+  companion: string;
+  companionId: number | null;
+  conversation: Conversation;
+  onSaved: () => void;
+}) {
+  const settings = useRegionSettings();
+  const companionScope = useCompanionScope(companionId);
+  const dm = conversation.channel.startsWith("dm:") ? conversation.channel.slice(3) : null;
+  const channels = useApiList<ConfigChannel>(
+    !dm && companionId != null ? `/api/config/companions/${companionId}/channels` : null,
+    "Failed to load channels",
+  );
+  const contact = useApiObject<{ peerPubkey: string; floodScope: FloodScope }>(
+    dm ? `/api/companions/${encodeURIComponent(companion)}/contacts/${dm}` : null,
+    "Failed to load contact",
+  );
+  const row = channels.items?.find((c) => c.name === conversation.channel);
+  const thisContact = contact.item?.peerPubkey.toLowerCase() === dm?.toLowerCase() ? contact.item : null;
+  const value = dm ? thisContact?.floodScope : row?.floodScope;
+  const [saving, setSaving] = useState(false);
 
-          {isContact && contactShareText && (
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <code className="flex-1 font-mono text-[11px] p-2 bg-background border border-border truncate select-all">
-                  {contactShareText}
-                </code>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={async () => {
-                    try {
-                      await navigator.clipboard.writeText(contactShareText);
-                      toast.success("Pubkey copied");
-                    } catch {
-                      toast.error("Copy failed");
-                    }
-                  }}
-                  className="rounded-none h-8 shrink-0"
-                >
-                  <ClipboardCopy className="size-3.5" />
-                </Button>
-              </div>
-              <p className="font-mono text-[10px] text-muted-foreground/70">
-                Share this public key so others can add this contact.
-              </p>
-            </div>
-          )}
-        </div>
+  let problem: string | null = null;
+  if (dm && contact.notFound) problem = "This node isn't a contact, so it sends in the companion's region.";
+  else if (dm && contact.error) problem = contact.error;
+  else if (!dm && channels.error) problem = channels.error;
+  else if (!dm && channels.items && !row) problem = "This channel isn't in the companion's settings, so its region can't be set here.";
+
+  const save = async (floodScope: FloodScope) => {
+    setSaving(true);
+    try {
+      if (dm) {
+        await request(`/api/companions/${encodeURIComponent(companion)}/contacts/${dm}/region`, "PUT", { floodScope });
+        contact.setItem((c) => c && { ...c, floodScope });
+      } else if (row) {
+        await configApi.saveChannel(row.id, { name: row.name, floodScope });
+        channels.setItems((rs) => rs?.map((r) => (r.id === row.id ? { ...r, floodScope } : r)) ?? rs);
+      }
+      toast.success("Region saved");
+      onSaved();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to save the region");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="rounded-none border-border bg-card max-w-sm">
+        <DialogHeader>
+          <DialogTitle className="font-mono text-sm uppercase tracking-[0.12em]">Region</DialogTitle>
+          <DialogDescription className="font-mono text-xs text-muted-foreground">
+            The region {conversation.name}&rsquo;s messages flood in. Repeaters that don&rsquo;t carry it won&rsquo;t relay them.
+          </DialogDescription>
+        </DialogHeader>
+        {value ? (
+          <RegionSelect
+            label={dm ? "Region for this contact" : "Region for this channel"}
+            value={value}
+            onChange={(v) => void save(v)}
+            regions={settings.regions}
+            inherit={{ from: "companion", resolved: companionScope }}
+            disabled={saving}
+            hint={dm ? "also its logins and requests; a DM on a known route goes direct, with no region" : undefined}
+          />
+        ) : (
+          <p role="status" className="font-mono text-xs text-muted-foreground">
+            {problem ?? "Loading…"}
+          </p>
+        )}
       </DialogContent>
     </Dialog>
   );

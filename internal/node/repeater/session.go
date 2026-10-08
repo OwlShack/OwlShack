@@ -10,7 +10,6 @@ import (
 	"time"
 
 	meshcore "github.com/OwlShack/meshcore-go"
-	"github.com/OwlShack/meshcore-go/node"
 
 	"github.com/OwlShack/OwlShack/internal/store"
 )
@@ -145,7 +144,7 @@ func (r *Repeater) handleAnonSubReq(pkt *meshcore.Packet, clientPub [32]byte, se
 		PathLength: pathLenByte,
 		Path:       params[1 : 1+pathLen],
 		Payload:    payload,
-	}, node.PrioritySend, serverReplyDelay); err != nil {
+	}, nil, serverReplyDelay); err != nil {
 		r.log.Error("anon sub-request reply failed", "subType", subType, "error", err)
 	}
 }
@@ -418,7 +417,7 @@ func (r *Repeater) sendServerReply(reqPkt *meshcore.Packet, clientPub [32]byte, 
 			Header:  meshcore.MakeHeader(meshcore.RouteTypeFlood, meshcore.PayloadTypePath, 0),
 			Payload: payload,
 		}
-		return r.sendFloodScoped(out, reqPkt, node.PriorityFloodRelay, serverReplyDelay)
+		return r.sendFloodScoped(out, reqPkt, serverReplyDelay)
 	}
 
 	// Direct request → RESPONSE datagram.
@@ -436,16 +435,15 @@ func (r *Repeater) sendServerReply(reqPkt *meshcore.Packet, clientPub [32]byte, 
 		Payload:    payload,
 	}
 	if routeType == meshcore.RouteTypeFlood { // no learned route — flooded fallback gets the request's scope too
-		return r.sendFloodScoped(out, reqPkt, node.PrioritySend, serverReplyDelay)
+		return r.sendFloodScoped(out, reqPkt, serverReplyDelay)
 	}
-	return r.sendPkt(out, node.PrioritySend, serverReplyDelay)
+	return r.sendPkt(out, nil, serverReplyDelay)
 }
 
 // sendFloodScoped ports MyMesh::sendFloodReply + chooseReplyScope: reuse the request's scope, else the default, else unscoped.
-func (r *Repeater) sendFloodScoped(out, reqPkt *meshcore.Packet, priority uint8, delay time.Duration) error {
+func (r *Repeater) sendFloodScoped(out, reqPkt *meshcore.Packet, delay time.Duration) error {
 	out.PathLength = meshcore.MakePathLen(reqPkt.PathHashSize(), 0)
-	out.SetScope(r.node.Regions().ReplyScope(reqPkt))
-	return r.sendPkt(out, priority, delay)
+	return r.sendPkt(out, r.replyScope(reqPkt), delay)
 }
 
 // learnFloodRoute caches a flood request's accumulated path, reversed into send order.

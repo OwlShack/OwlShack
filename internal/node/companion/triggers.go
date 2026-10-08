@@ -154,7 +154,7 @@ func (c *Companion) makeCallback(ctx context.Context, entry triggerEntry) trigge
 		case "channel":
 			ch, _ := evt.Data["ChannelEntry"].(*meshcore.ChannelEntry)
 			c.log.Debug("sending group txt", "channel", ch.Name, "pathHashSize", hashSize)
-			if err := c.sendGroupReply(ch, rendered, hashSize, retryTimeout, *entry.config.MaxRetries); err != nil {
+			if err := c.sendGroupReply(ch, rendered, hashSize, retryTimeout, *entry.config.MaxRetries, config.ResolveScope(entry.config.FloodScope, c.channelScope(ch.Name))); err != nil {
 				c.log.Error("send error", "error", err)
 			}
 
@@ -162,7 +162,7 @@ func (c *Companion) makeCallback(ctx context.Context, entry triggerEntry) trigge
 			pubkey, _ := evt.Data["SenderPubKey"].(string)
 			hashSize := resolvePathHashSize(entry.config.PathHashSize, evt, c.bytesPerHopHex(pubkey))
 			c.log.Debug("sending dm reply", "peer", pubkey, "pathHashSize", hashSize)
-			if err := c.sendDMReply(pubkey, rendered, hashSize, retryTimeout); err != nil {
+			if err := c.sendDMReply(pubkey, rendered, hashSize, retryTimeout, config.ResolveScope(entry.config.FloodScope, c.contactScopeHex(pubkey))); err != nil {
 				c.log.Error("send error", "error", err)
 			}
 
@@ -171,14 +171,14 @@ func (c *Companion) makeCallback(ctx context.Context, entry triggerEntry) trigge
 		case "cron", "rss", "cap":
 			for _, ch := range entry.channels {
 				c.log.Debug("sending group txt", "channel", ch.Name, "pathHashSize", hashSize)
-				if err := c.sendGroupReply(ch, rendered, hashSize, retryTimeout, *entry.config.MaxRetries); err != nil {
+				if err := c.sendGroupReply(ch, rendered, hashSize, retryTimeout, *entry.config.MaxRetries, config.ResolveScope(entry.config.FloodScope, c.channelScope(ch.Name))); err != nil {
 					c.log.Error("send error", "error", err)
 				}
 			}
 			for _, pubkey := range triggerContacts(entry.config) {
 				hashSize := resolvePathHashSize(entry.config.PathHashSize, evt, c.bytesPerHopHex(pubkey))
 				c.log.Debug("sending dm", "peer", pubkey, "pathHashSize", hashSize)
-				if err := c.sendDMReply(pubkey, rendered, hashSize, retryTimeout); err != nil {
+				if err := c.sendDMReply(pubkey, rendered, hashSize, retryTimeout, config.ResolveScope(entry.config.FloodScope, c.contactScopeHex(pubkey))); err != nil {
 					c.log.Error("send error", "peer", pubkey, "error", err)
 				}
 			}

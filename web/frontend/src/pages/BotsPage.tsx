@@ -48,9 +48,11 @@ import {
   configApi,
   type ConfigChannel,
   type ConfigCompanion,
+  type FloodScope,
   type Trigger,
   type TriggerLocation,
 } from "@/lib/configApi";
+import { RegionSelect, useRegionSettings } from "@/components/RegionSelect";
 
 const TYPE_OPTS = [
   { value: "group", label: "Group message (match & reply)" },
@@ -512,6 +514,8 @@ function BotEditor({
   const [pathHashSize, setPathHashSize] = useState(
     trigger?.pathHashSize != null ? String(trigger.pathHashSize) : "default",
   );
+  const [floodScope, setFloodScope] = useState<FloodScope>(trigger?.floodScope ?? "inherit");
+  const regionSettings = useRegionSettings();
   const [saving, setSaving] = useState(false);
 
   // Say what "default" resolves to rather than printing a number that is only right sometimes: a
@@ -598,6 +602,7 @@ function BotEditor({
           retryTimeout: parseInt(retryTimeout, 10) || 5,
           pathHashSize:
             pathHashSize === "default" ? null : parseInt(pathHashSize, 10),
+          floodScope,
         },
         trigger?.id,
       );
@@ -962,6 +967,13 @@ function BotEditor({
               ]}
               onChange={setPathHashSize}
               hint={pathHashSizeHint}
+            />
+            <RegionSelect
+              value={floodScope}
+              onChange={setFloodScope}
+              regions={regionSettings.regions}
+              inherit={{ from: "where it posts" }}
+              hint="same as where it posts follows each channel's or contact's own region"
             />
           </div>
 

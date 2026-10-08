@@ -67,7 +67,7 @@ publish:
 
 | Field | Freshness |
 |---|---|
-| `battery_mv`, `noise_floor`, `mcu_temp_c` | polled off the board every publish |
+| `battery_mv`, `noise_floor`, `mcu_temp_c` | polled off the board every publish; `noise_floor` left out until first measured |
 | `uptime_secs`, all counters, air seconds | live atomics |
 | `radio` | captured at `modem.Setup`; a radio change forces a modem reconnect, which rebuilds the provider |
 | `origin`, `origin_id` | captured at observer construction; a rename changes the companion block, so the companion (and its observer) is rebuilt |
@@ -100,21 +100,16 @@ observed parse.
 |---|---|---|
 | Packet (meshcoretomqtt) | 18 | **18 — complete** |
 | Status top level (meshcoretomqtt) | 8 | **8 — complete** |
-| Status `stats` (meshcoretomqtt) | 8 | 6 — missing `debug_flags`, `tx_air_secs` |
-| Status (CoreScope ingest) | 9 | 8 — missing `tx_air_secs` |
+| Status `stats` (meshcoretomqtt) | 8 | 7 — missing `debug_flags` |
+| Status (CoreScope ingest) | 9 | **9 — complete** |
 
 Plus 22 `stats` extensions of our own that no consumer reads yet.
 
-Two coverage gaps that are not field-shaped:
-
-- **We publish RX packets only.** `publishPacket` is only ever called with
-  `"rx"`, while meshcoretomqtt publishes both directions, so a map consumer
-  never sees what this node transmitted. Closing it needs an outbound handler
-  on the modem (as `wirePacketLogger` has) *and* the per-broker dedup re-keyed
-  to (hash, direction) — `meshcore.DedupCache.HasSeen` keys on the hash alone,
-  so relaying a flood we already published as RX would be dropped as a dup.
-- **`tx_air_secs` and `repeat`** are the only status fields with a known reader
-  that we do not send. Both need plumbing rather than a formatting change.
+Both directions are published: `Observer.NoteTx`, on the modem's outbound
+handler (`internal/app/packetlog.go`), publishes each transmitted packet as `tx`
+and counts `flood_tx`, `direct_tx` and `tx_air_secs`, so they cover every node
+in the process. Each broker dedups each direction on its own cache, so a flood
+we published as RX and then relayed still publishes as TX.
 
 ### Rules the current set encodes
 
@@ -125,7 +120,7 @@ Two coverage gaps that are not field-shaped:
 - **`score` and `duration` are derived, and so are the firmware's**: `score=(int)(packetScore*1000)`, `time=getEstAirtimeFor(len)`. `modem.StatsProvider` mirrors them as `PacketScore` / `EstAirtimeMs` so `internal/mqtt` takes no dependency on the driver package.
 - **`path` is not a route.** It reproduces `Dispatcher.cpp`'s `[%02X -> %02X]` trailer — `payload[1] -> payload[0]`, i.e. source then destination hash prefix — for the four addressed payload types on a direct route only. Published without brackets, RX only.
 - **Packet counters ship under two names, and both have a reader.** `recv`/`sent` are the firmware's `stats-packets` names, also the vocabulary of CoreScope's client-RF topic; `packets_recv`/`packets_sent` are what CoreScope's *observer-status* ingest reads (`extractObserverMeta`, `cmd/ingestor/main.go`), with no alternative accepted. Publishing only one set silently drops the counters for one of them. The pre-release name `packets_received` was read by nothing — the key that consumer needs is `packets_recv`, so our RX count had never been ingested. `format_test.go` asserts all four keys and that the aliases agree.
-- **Absent on purpose**, because nothing here can populate them: `errors` (firmware `_err_flags`), `flood_tx` / `direct_tx`, `tx_air_secs` — the observer taps the mux's RX side only and the mux exposes no airtime total. A permanent 0 reads as a silent radio. **CoreScope does read `tx_air_secs`**, so this one costs a real consumer a real field; populating it needs an outbound handler on the modem, the way `wirePacketLogger` does. CoreScope's own client-RF spec takes the same position we do ("Absent stays SQL NULL, never 0 — storing 0 would read as a perfectly clean channel").
+- **Absent on purpose**: `errors` (firmware `_err_flags`, `debug_flags` to meshcoretomqtt), which nothing here can populate, and `noise_floor` until the radio has measured one (the sx12xx's first sampling round, a KISS or openHop modem's first answer). A 0 dBm floor reads as a deafening channel. CoreScope's own client-RF spec takes the same position we do ("Absent stays SQL NULL, never 0 — storing 0 would read as a perfectly clean channel").
 - **`repeat` is published** top-level from `obs.Relaying` (`SetRelaying`, pushed before `Start` and re-pushed after a SIGHUP reload), matching firmware 1.16 and CoreScope's `CanRelay`. It must stay at the top level, never inside `stats`: CoreScope reads `msg` directly, and a missing field leaves `CanRelay` nil so the prior value persists. Tests pin both halves. Near-collision: our `hw_errors` is the KISS driver's HW_RESP_ERROR frame count, **not** the firmware's `errors`.
 - `rx_meta_misattributed` and `rx_meta_timeouts` both count signal reports lost on the KISS link, never a wrong reading. The firmware queues each packet's RX_META right behind it on one FIFO (`KissModem::onPacketReceived`), so a report can go missing but never arrive out of order, and the library refuses a pairing rather than guessing: a packet still waiting when the next arrives, or a report with no packet waiting, counts as misattributed; a 1 s wait counts as a timeout. Either way the packet is published with no `snr`/`rssi`/`score`. Floods arrive in bursts, so on a real mesh most lost reports land in `rx_meta_misattributed`. The key name is shared with firmware bridges, so it stays.
 - `handler_slow` is non-zero only because `modem.Setup` passes `hardware.WithHandlerWatchdog(500ms)` — a constant, not a knob. With `WithRxDelay` set (the repeater does) the real work runs on the library's `runInbound` goroutine, so it measures the companion's and observer's handlers, not the repeater's.

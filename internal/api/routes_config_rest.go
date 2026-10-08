@@ -29,9 +29,11 @@ type settingsDTO struct {
 	ModemTokenSet  bool     `json:"modemTokenSet"` // redacted
 	PathHashSize   *int     `json:"pathHashSize"`
 	// DutyCycle is a percentage, the unit the firmware's `set dutycycle` takes; null is the default (50%).
-	DutyCycle           *float64 `json:"dutyCycle"`
-	PacketRetentionDays int      `json:"packetRetentionDays"`
-	SetupComplete       bool     `json:"setupComplete"`
+	DutyCycle           *float64            `json:"dutyCycle"`
+	PacketRetentionDays int                 `json:"packetRetentionDays"`
+	SetupComplete       bool                `json:"setupComplete"`
+	FloodRegions        []store.FloodRegion `json:"floodRegions"`
+	FloodScope          string              `json:"floodScope"`
 }
 
 type mqttDTO struct {
@@ -79,6 +81,7 @@ type companionDTO struct {
 	TelemetryBase        string `json:"telemetryBase"`
 	TelemetryLocation    string `json:"telemetryLocation"`
 	TelemetryEnvironment string `json:"telemetryEnvironment"`
+	FloodScope           string `json:"floodScope"`
 }
 
 type channelDTO struct {
@@ -86,6 +89,7 @@ type channelDTO struct {
 	CompanionID   int64  `json:"companionId"`
 	Name          string `json:"name"`
 	PrivateKeySet bool   `json:"privateKeySet"` // redacted; fetch via the channel key endpoint
+	FloodScope    string `json:"floodScope"`
 }
 
 type triggerDTO struct {
@@ -106,6 +110,7 @@ type triggerDTO struct {
 	URL                string           `json:"url"`
 	Location           *TriggerLocation `json:"location"`
 	Regions            *[]string        `json:"regions"`
+	FloodScope         string           `json:"floodScope"`
 }
 
 func brokerToDTO(b store.Broker) brokerDTO {
@@ -125,11 +130,12 @@ func companionToDTO(c store.Companion) companionDTO {
 		PathHashSize: c.PathHashSize,
 		DMPolicy:     c.DMPolicy, DMAllow: c.DMAllow,
 		TelemetryBase: c.TelemBase, TelemetryLocation: c.TelemLoc, TelemetryEnvironment: c.TelemEnv,
+		FloodScope: c.FloodScope,
 	}
 }
 
 func channelToDTO(c store.CompanionChannel) channelDTO {
-	return channelDTO{ID: c.ID, CompanionID: c.CompanionID, Name: c.Name, PrivateKeySet: c.PrivateKey != ""}
+	return channelDTO{ID: c.ID, CompanionID: c.CompanionID, Name: c.Name, PrivateKeySet: c.PrivateKey != "", FloodScope: c.FloodScope}
 }
 
 func triggerToDTO(t store.Trigger) triggerDTO {
@@ -139,7 +145,7 @@ func triggerToDTO(t store.Trigger) triggerDTO {
 		ChannelIDs: t.ChannelIDs, RetryTimeout: t.RetryTimeout, MaxRetries: t.MaxRetries,
 		PathHashSize: t.PathHashSize, Schedule: t.Schedule, URL: t.URL,
 		FailoverPattern: t.FailoverPattern, FailoverTimeout: t.FailoverTimeout,
-		Location: locationToDTO(t.Location), Regions: t.Regions,
+		Location: locationToDTO(t.Location), Regions: t.Regions, FloodScope: t.FloodScope,
 	}
 }
 
@@ -166,6 +172,7 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		ModemTokenSet: st.ModemToken != nil && *st.ModemToken != "",
 		DutyCycle:     st.DutyCyclePct, PacketRetentionDays: st.PacketRetentionDays,
 		SetupComplete: st.SetupComplete,
+		FloodRegions:  append([]store.FloodRegion{}, st.FloodRegions...), FloodScope: st.FloodScope,
 	})
 }
 
@@ -260,7 +267,24 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := b.SaveSettings(r.Context(), in); err != nil {
-		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		writeConfigError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handlePutFloodRegions(w http.ResponseWriter, r *http.Request) {
+	b, ok := s.configBackend(w)
+	if !ok {
+		return
+	}
+	var in FloodRegionsInput
+	if err := readJSON(r, &in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+	if err := b.SaveFloodRegions(r.Context(), in); err != nil {
+		writeConfigError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -277,7 +301,7 @@ func (s *Server) handlePutMqtt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := b.SaveMqtt(r.Context(), in); err != nil {
-		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		writeConfigError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -298,7 +322,7 @@ func (s *Server) handleSaveBroker(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := b.SaveBroker(r.Context(), in)
 	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		writeConfigError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]int64{"id": id})
@@ -315,7 +339,7 @@ func (s *Server) handleDeleteBroker(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := b.DeleteBroker(r.Context(), id); err != nil {
-		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		writeConfigError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -336,7 +360,7 @@ func (s *Server) handleSaveCompanion(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := b.SaveCompanion(r.Context(), in)
 	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		writeConfigError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]int64{"id": id})
@@ -358,7 +382,7 @@ func (s *Server) handleSetCompanionTelemetry(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if err := b.SetCompanionTelemetry(r.Context(), id, in); err != nil {
-		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		writeConfigError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -375,7 +399,7 @@ func (s *Server) handleDeleteCompanion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := b.DeleteCompanion(r.Context(), id); err != nil {
-		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		writeConfigError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -400,7 +424,7 @@ func (s *Server) handleCreateChannel(w http.ResponseWriter, r *http.Request) {
 	in.CompanionID = cid
 	id, err := b.SaveChannel(r.Context(), in)
 	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		writeConfigError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]int64{"id": id})
@@ -423,7 +447,7 @@ func (s *Server) handleSaveChannel(w http.ResponseWriter, r *http.Request) {
 	}
 	in.ID = id
 	if _, err := b.SaveChannel(r.Context(), in); err != nil {
-		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		writeConfigError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -440,7 +464,7 @@ func (s *Server) handleDeleteChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := b.DeleteChannel(r.Context(), id); err != nil {
-		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		writeConfigError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -461,7 +485,7 @@ func (s *Server) handleSaveTrigger(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := b.SaveTrigger(r.Context(), in)
 	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		writeConfigError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]int64{"id": id})
@@ -514,7 +538,7 @@ func (s *Server) handleDeleteTrigger(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := b.DeleteTrigger(r.Context(), id); err != nil {
-		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		writeConfigError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
