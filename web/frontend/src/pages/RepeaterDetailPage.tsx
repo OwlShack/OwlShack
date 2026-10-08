@@ -228,8 +228,13 @@ export function RepeaterDetailPage({ kind = "repeater" }: { kind?: AdminNodeKind
   const [loggingIn, setLoggingIn] = useState(false);
   const [pathDialogOpen, setPathDialogOpen] = useState(false);
 
-  const peerName = contact?.name || (isSensor ? "Sensor" : isRoom ? "Room" : "Repeater");
-  const peerType = contact?.type || (isSensor ? "SENSOR" : isRoom ? "ROOM" : "REPEATER");
+  const peer = useMemo(
+    () => peers.find((p) => p.pubkey.toLowerCase() === decodedPubkey.toLowerCase()),
+    [peers, decodedPubkey],
+  );
+  const knownName = contact?.name || peer?.name;
+  const peerName = knownName || (isSensor ? "Sensor" : isRoom ? "Room" : "Repeater");
+  const peerType = contact?.type || peer?.type || (isSensor ? "SENSOR" : isRoom ? "ROOM" : "REPEATER");
   const isAdmin = !!session?.isAdmin;
   // A tab this login can't see (after logging back in with a lesser role) falls back to the first one.
   const tabShown: Record<TabKey, boolean> = {
@@ -741,9 +746,12 @@ export function RepeaterDetailPage({ kind = "repeater" }: { kind?: AdminNodeKind
                   peerName={peerName}
                   sendCli={sendCli}
                   onReboot={() => navigate(0)}
-                  onLocalNameUpdate={(n) =>
-                    setContact((c) => (c ? { ...c, name: n } : c))
-                  }
+                  onLocalNameUpdate={(n) => {
+                    setContact((c) => (c ? { ...c, name: n } : c));
+                    setPeers((ps) =>
+                      ps.map((p) => (p.pubkey.toLowerCase() === decodedPubkey.toLowerCase() ? { ...p, name: n } : p)),
+                    );
+                  }}
                 />
               </TabsContent>
             )}
@@ -755,7 +763,7 @@ export function RepeaterDetailPage({ kind = "repeater" }: { kind?: AdminNodeKind
           onOpenChange={setPathDialogOpen}
           companion={decodedName}
           pubkey={decodedPubkey}
-          name={contact?.name || "this node"}
+          name={knownName || "this node"}
           onChanged={refreshPath}
         />
       </div>

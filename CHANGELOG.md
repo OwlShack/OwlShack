@@ -95,6 +95,8 @@ top until tagged.
 
 ### Fixed
 
+- **A room, repeater or sensor you haven't added as a contact shows its own name.** Its page was
+  titled just "Room", "Repeater" or "Sensor"; it now uses the name from its advert.
 - **A room server opened from Contacts, Monitoring, the Repeaters list or a message thread shows
   its posts.** It opened as a repeater page, without Posts stored and Posts pushed.
 - **A message that could not be sent shows as failed.** When the radio's queue was full, a
