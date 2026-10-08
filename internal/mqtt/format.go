@@ -103,7 +103,7 @@ func addressedPathLabel(pkt *meshcore.Packet) string {
 	return fmt.Sprintf("%02X -> %02X", pkt.Payload[1], pkt.Payload[0])
 }
 
-// statsBlock is a wire schema shared with meshcore-bot — change field names in both. Sent and QueueLen are PROCESS-wide, not per-node.
+// statsBlock is a wire schema shared with OwlBot — change field names in both. Sent and QueueLen are PROCESS-wide, not per-node.
 type statsBlock struct {
 	UptimeSecs uint32 `json:"uptime_secs"`
 	// Both names ship: recv/sent is the firmware and CoreScope client-RF vocabulary, packets_recv/packets_sent is what CoreScope's status ingest requires.
@@ -157,7 +157,7 @@ type statsBlock struct {
 }
 
 // u64 flattens a counter this transport cannot measure to 0: the published schema is shared with
-// meshcore-bot and CoreScope, so omitting a key here is a coordinated change, not a local one.
+// OwlBot and CoreScope, so omitting a key here is a coordinated change, not a local one.
 func u64(p *uint64) uint64 {
 	if p == nil {
 		return 0
