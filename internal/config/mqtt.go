@@ -7,8 +7,16 @@ import (
 	"strings"
 )
 
+// MqttNodeCompanion and MqttNodeRepeater are the kinds of node that can feed MQTT.
+const (
+	MqttNodeCompanion = "companion"
+	MqttNodeRepeater  = "repeater"
+)
+
 type MqttConfig struct {
-	// Node names the companion whose identity feeds the observer; empty = the first companion.
+	// NodeKind is the kind of node whose identity feeds the observer: "companion" (or unset) or "repeater".
+	NodeKind *string `json:"nodeKind,omitempty" yaml:"nodeKind,omitempty" toml:"nodeKind,omitempty"`
+	// Node names the companion that feeds the observer when NodeKind is companion; an import naming none stores the first.
 	Node    *string `json:"node,omitempty" yaml:"node,omitempty" toml:"node,omitempty"`
 	Enabled *bool   `json:"enabled,omitempty" yaml:"enabled,omitempty" toml:"enabled,omitempty"` // nil = enabled
 
@@ -17,6 +25,16 @@ type MqttConfig struct {
 	Owner          *string        `json:"owner" yaml:"owner" toml:"owner"`
 	Email          *string        `json:"email" yaml:"email" toml:"email"`
 	Brokers        []BrokerConfig `json:"brokers" yaml:"brokers" toml:"broker"`
+}
+
+// FedByRepeater is whether the repeater, not a companion, feeds the observer.
+func (c *MqttConfig) FedByRepeater() bool {
+	return c != nil && c.NodeKind != nil && *c.NodeKind == MqttNodeRepeater
+}
+
+// Publishes is whether the observer has somewhere to publish: MQTT enabled, with an enabled broker.
+func (c *MqttConfig) Publishes() bool {
+	return c.IsEnabled() && slices.ContainsFunc(c.Brokers, func(b BrokerConfig) bool { return b.Enabled })
 }
 
 func (c *MqttConfig) IsEnabled() bool {

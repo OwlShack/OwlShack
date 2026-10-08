@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
-	"sync/atomic"
 
 	meshcore "github.com/OwlShack/meshcore-go"
 	"github.com/OwlShack/meshcore-go/node"
@@ -16,7 +15,6 @@ import (
 	"github.com/OwlShack/OwlShack/internal/config"
 	"github.com/OwlShack/OwlShack/internal/echo"
 	"github.com/OwlShack/OwlShack/internal/modem"
-	"github.com/OwlShack/OwlShack/internal/mqtt"
 	"github.com/OwlShack/OwlShack/internal/sensor"
 	"github.com/OwlShack/OwlShack/internal/store"
 	"github.com/OwlShack/OwlShack/internal/trigger"
@@ -85,16 +83,13 @@ type Companion struct {
 
 	triggers []triggerEntry
 
-	// MQTT: outbound only
-	obs *mqtt.Observer
-
 	mu     sync.Mutex
 	cancel context.CancelFunc
 	// runCtx is kept so ReloadTriggers can start new triggers without a full restart.
 	runCtx context.Context
 }
 
-func NewCompanion(cfg config.CompanionConfig, mux *node.RadioMux, st *store.Store, hub *api.Hub, echoTracker *echo.Tracker, stats modem.StatsProvider, parseErrors *atomic.Uint64, floodScopeOf func(*meshcore.Packet) string, nodeOpts ...node.Option) (*Companion, error) {
+func NewCompanion(cfg config.CompanionConfig, mux *node.RadioMux, st *store.Store, hub *api.Hub, echoTracker *echo.Tracker, stats modem.StatsProvider, floodScopeOf func(*meshcore.Packet) string, nodeOpts ...node.Option) (*Companion, error) {
 	name := strings.TrimSpace(cfg.Name)
 	if name == "" {
 		return nil, fmt.Errorf("companion name is required")
@@ -155,27 +150,9 @@ func NewCompanion(cfg config.CompanionConfig, mux *node.RadioMux, st *store.Stor
 		return nil, err
 	}
 
-	if companion.cfg.Mqtt != nil {
-		mqttCfg := *companion.cfg.Mqtt
-
-		obs, err := mqtt.NewObserver(mqttCfg, name, mux, companion.node.Identity(), stats, parseErrors)
-		if err != nil {
-			return nil, fmt.Errorf("creating mqtt observer: %w", err)
-		}
-		companion.obs = obs
-	}
-
 	companion.registerPacketHandlers()
 
 	return companion, nil
-}
-
-// MqttStatus reports this companion's MQTT broker state; ok=false when it isn't the node feeding MQTT.
-func (c *Companion) MqttStatus() ([]mqtt.BrokerStatus, bool) {
-	if c.obs == nil {
-		return nil, false
-	}
-	return c.obs.BrokerStatuses(), true
 }
 
 func (c *Companion) Start(ctx context.Context) error {
@@ -190,13 +167,6 @@ func (c *Companion) Start(ctx context.Context) error {
 		if err := e.trigger.Start(ctx, c.makeCallback(ctx, e)); err != nil {
 			cancel()
 			return fmt.Errorf("starting trigger %d (%s): %w", i, e.config.Type, err)
-		}
-	}
-
-	if c.obs != nil {
-		obsErr := c.obs.Start(ctx)
-		if obsErr != nil {
-			return fmt.Errorf("starting mqtt observer: %w", obsErr)
 		}
 	}
 
@@ -216,10 +186,6 @@ func (c *Companion) Stop() error {
 
 	for _, trig := range c.triggers {
 		trig.trigger.Stop()
-	}
-
-	if c.obs != nil {
-		c.obs.Stop()
 	}
 
 	c.node.Stop()
@@ -254,6 +220,3 @@ func (c *Companion) Node() *node.Node {
 func (c *Companion) Repeaters() *repeater.Client {
 	return c.repeaters
 }
-
-// Observer returns this companion's MQTT observer, or nil when it isn't the feeding node.
-func (c *Companion) Observer() *mqtt.Observer { return c.obs }

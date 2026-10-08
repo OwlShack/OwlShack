@@ -14,6 +14,7 @@ import (
 	"github.com/OwlShack/OwlShack/internal/config"
 	"github.com/OwlShack/OwlShack/internal/discover"
 	"github.com/OwlShack/OwlShack/internal/modem"
+	"github.com/OwlShack/OwlShack/internal/mqtt"
 	"github.com/OwlShack/OwlShack/internal/node/companion"
 	"github.com/OwlShack/OwlShack/internal/node/repeater"
 	"github.com/OwlShack/OwlShack/internal/sensor"
@@ -45,6 +46,8 @@ type backend struct {
 	// feedPreview keeps what a bot Test fetched across radio generations, so a reconnect mid-edit does not refetch.
 	feedPreview *trigger.FeedPreview
 	regionScan  *regionScanner
+	// mqtt is the observer speaking as the node MQTT is fed by, or nil when MQTT is off.
+	mqtt *mqtt.Observer
 }
 
 func (b *backend) find(name string) (*companion.Companion, bool) {
@@ -279,40 +282,37 @@ func remoteErr(err error) error {
 	return api.Failed(status, err)
 }
 
-// MqttStatus finds the one companion running the MQTT observer.
+// MqttStatus reports the observer's brokers; ok=false when MQTT is off.
 func (b *backend) MqttStatus() ([]api.MqttBrokerStatus, bool) {
-	for _, c := range b.companions {
-		sts, ok := c.MqttStatus()
-		if !ok {
-			continue
-		}
-		out := make([]api.MqttBrokerStatus, 0, len(sts))
-		for _, s := range sts {
-			st := api.MqttBrokerStatus{
-				Name:        s.Name,
-				Host:        s.Host,
-				Port:        s.Port,
-				Transport:   s.Transport,
-				TLS:         s.TLS,
-				AuthType:    s.AuthType,
-				Enabled:     s.Enabled,
-				Connected:   s.Connected,
-				LastError:   s.LastError,
-				Published:   s.Published,
-				Dropped:     s.Dropped,
-				StatusTopic: s.StatusTopic,
-			}
-			if !s.LastErrorAt.IsZero() {
-				st.LastErrorTs = s.LastErrorAt.Unix()
-			}
-			if !s.ConnectedAt.IsZero() {
-				st.ConnectedTs = s.ConnectedAt.Unix()
-			}
-			out = append(out, st)
-		}
-		return out, true
+	if b.mqtt == nil {
+		return nil, false
 	}
-	return nil, false
+	sts := b.mqtt.BrokerStatuses()
+	out := make([]api.MqttBrokerStatus, 0, len(sts))
+	for _, s := range sts {
+		st := api.MqttBrokerStatus{
+			Name:        s.Name,
+			Host:        s.Host,
+			Port:        s.Port,
+			Transport:   s.Transport,
+			TLS:         s.TLS,
+			AuthType:    s.AuthType,
+			Enabled:     s.Enabled,
+			Connected:   s.Connected,
+			LastError:   s.LastError,
+			Published:   s.Published,
+			Dropped:     s.Dropped,
+			StatusTopic: s.StatusTopic,
+		}
+		if !s.LastErrorAt.IsZero() {
+			st.LastErrorTs = s.LastErrorAt.Unix()
+		}
+		if !s.ConnectedAt.IsZero() {
+			st.ConnectedTs = s.ConnectedAt.Unix()
+		}
+		out = append(out, st)
+	}
+	return out, true
 }
 
 // RepeaterNode returns ok=false when no repeater is configured or running.

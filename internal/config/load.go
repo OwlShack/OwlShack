@@ -342,6 +342,17 @@ func (c *Config) Validate() error {
 	}
 
 	if c.Mqtt != nil {
+		if k := c.Mqtt.NodeKind; k != nil && *k != MqttNodeCompanion && *k != MqttNodeRepeater {
+			return fmt.Errorf("mqtt nodeKind %q must be companion or repeater", *k)
+		}
+		if c.Mqtt.FedByRepeater() {
+			if c.Repeater == nil {
+				return fmt.Errorf("mqtt is fed by the repeater, but no repeater is configured")
+			}
+			if c.Mqtt.Node != nil && *c.Mqtt.Node != "" {
+				return fmt.Errorf("mqtt node %q names a companion, but the repeater feeds mqtt", *c.Mqtt.Node)
+			}
+		}
 		if c.Mqtt.Node != nil && *c.Mqtt.Node != "" && !seen[*c.Mqtt.Node] {
 			return fmt.Errorf("mqtt node %q does not match any companion", *c.Mqtt.Node)
 		}

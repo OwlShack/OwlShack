@@ -200,7 +200,7 @@ func (s *Server) handleDeleteRepeater(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := b.DeleteRepeater(r.Context()); err != nil {
-		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		writeConfigError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

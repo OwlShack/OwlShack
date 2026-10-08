@@ -195,3 +195,11 @@ func TestPublishPacket_SelectsDedupCacheByDirection(t *testing.T) {
 		t.Errorf("a repeated rx queued %d, want no extra", got)
 	}
 }
+
+// A disabled broker has no connection, so the status lists only the enabled ones, as a stale disabled entry would outlive its edit.
+func TestBrokerStatuses_SkipsDisabled(t *testing.T) {
+	o := &Observer{cfg: config.MqttConfig{Brokers: []config.BrokerConfig{{Name: "on", Enabled: true}, {Name: "off"}}}}
+	if st := o.BrokerStatuses(); len(st) != 1 || st[0].Name != "on" {
+		t.Errorf("statuses = %+v, want only the enabled broker", st)
+	}
+}

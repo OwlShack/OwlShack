@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -23,6 +24,7 @@ import (
 	"github.com/OwlShack/OwlShack/internal/logging"
 	"github.com/OwlShack/OwlShack/internal/modem"
 	"github.com/OwlShack/OwlShack/internal/monitor"
+	"github.com/OwlShack/OwlShack/internal/mqtt"
 	"github.com/OwlShack/OwlShack/internal/node/companion"
 	"github.com/OwlShack/OwlShack/internal/node/repeater"
 	"github.com/OwlShack/OwlShack/internal/signaltest"
@@ -169,6 +171,8 @@ func Run(ctx context.Context, importPath string, verbosity int) error {
 
 	// Long-lived across reloads: reaches the current companions through compReg, re-pointed on each reload.
 	compReg := newCompanionRegistry()
+	// The packet logger outlives every reload, so it reads the current observer through this.
+	mqttObs := new(atomic.Pointer[mqtt.Observer])
 
 	mon := monitor.New(db, srv.Hub(), newMergedLister(newContactLister(compReg, db), newLinkLister(compReg, db)), slog.Default())
 	mon.RegisterCollector("repeater", newRepeaterCollector(compReg, db, slog.Default()))
@@ -187,6 +191,7 @@ func Run(ctx context.Context, importPath string, verbosity int) error {
 		mux        *node.RadioMux
 		companions []*companion.Companion
 		rep        *repeater.Repeater
+		feed       *mqttFeed
 		disc       *discover.Service
 	)
 	// newDiscovery attaches zero-hop discovery to whichever node is running. The request carries no
@@ -211,7 +216,7 @@ func Run(ctx context.Context, importPath string, verbosity int) error {
 	// startRadio brings up the modem and everything that hangs off it, leaving ms nil if it cannot.
 	// Failing is not fatal: exiting here would take away the page an operator uses to fix the connection.
 	startRadio := func(c *config.Config) error {
-		newMs, newMux, err := reconnectModem(ctx, c, db, srv, reconnectCh, compReg)
+		newMs, newMux, err := reconnectModem(ctx, c, db, srv, reconnectCh, mqttObs)
 		if err != nil {
 			return err
 		}
@@ -227,6 +232,8 @@ func Run(ctx context.Context, importPath string, verbosity int) error {
 			return fmt.Errorf("%w: %w", errRepeaterStart, err)
 		}
 		ms, mux, companions, rep = newMs, newMux, newComps, newRep
+		feed = reloadMqtt(ctx, c, companions, rep, mux, ms, nil)
+		mqttObs.Store(feed.observer())
 		compReg.set(companions)
 		disc = newDiscovery()
 		return nil
@@ -238,12 +245,14 @@ func Run(ctx context.Context, importPath string, verbosity int) error {
 		srv.SetBackend(&backend{
 			companions: companions, repeater: rep, db: db, stats: statsOf(ms), mux: mux,
 			reload: reload, resetModem: resetModem, discover: disc, sensors: sensorHub, telemetry: telemetry,
-			feedPreview: feedPreview, regionScan: regionScan,
+			feedPreview: feedPreview, regionScan: regionScan, mqtt: feed.observer(),
 		})
 	}
 
 	// stopRadio tears the stack down and leaves the vars nil, which is the state startRadio recovers from.
 	stopRadio := func() {
+		mqttObs.Store(nil)
+		feed.stop()
 		stopCompanions(companions)
 		stopRepeater(rep)
 		if ms != nil {
@@ -251,7 +260,7 @@ func Run(ctx context.Context, importPath string, verbosity int) error {
 			radioSeen.keepReply(ms.Stats)
 			ms.Close()
 		}
-		ms, mux, companions, rep, disc = nil, nil, nil, nil, nil
+		ms, mux, companions, rep, disc, feed = nil, nil, nil, nil, nil, nil
 	}
 
 	// retryTimer is nil whenever no retry is pending, and a nil channel blocks forever in a select —
@@ -327,14 +336,18 @@ func Run(ctx context.Context, importPath string, verbosity int) error {
 			} else {
 				companions, stats, err = reloadCompanions(ctx, cfg, newCfg, companions, ms, mux, db, srv.Hub(), echoTracker, telemetry)
 				if err != nil {
+					feed.stop()
 					ms.Close()
 					return fmt.Errorf("companion restart after reload: %w", err)
 				}
 				rep, err = reloadRepeater(ctx, cfg, newCfg, rep, mux, db, srv.Hub(), ms.Stats, reload, telemetry)
 				if err != nil {
+					feed.stop()
 					ms.Close()
 					return fmt.Errorf("repeater restart after reload: %w", err)
 				}
+				feed = reloadMqtt(ctx, newCfg, companions, rep, mux, ms, feed)
+				mqttObs.Store(feed.observer())
 			}
 			cfg = newCfg
 			compReg.set(companions)
@@ -391,9 +404,6 @@ type reloadStats struct {
 
 // reloadCompanions reuses running instances whose block is unchanged; a nil oldCfg/running builds everything.
 func reloadCompanions(ctx context.Context, oldCfg, newCfg *config.Config, running []*companion.Companion, ms *modem.State, mux *node.RadioMux, db *store.Store, hub *api.Hub, echoTracker *echo.Tracker, telemetry *telemetryPublisher) ([]*companion.Companion, reloadStats, error) {
-	// Must reach the observer before Start: it publishes its first status the instant a broker connects.
-	relaying := newCfg.Repeater != nil && !newCfg.Repeater.IsFwdDisabled()
-
 	oldBlocks := make(map[string]config.CompanionConfig)
 	if oldCfg != nil {
 		for _, b := range effectiveCompanionConfigs(oldCfg) {
@@ -464,13 +474,10 @@ func reloadCompanions(ctx context.Context, oldCfg, newCfg *config.Config, runnin
 			companions = append(companions, p.reuse)
 			continue
 		}
-		c, err := companion.NewCompanion(p.block, mux, db, hub, echoTracker, ms.Stats, ms.ParseErrors, floodScopeOf)
+		c, err := companion.NewCompanion(p.block, mux, db, hub, echoTracker, ms.Stats, floodScopeOf)
 		if err != nil {
 			stopAll()
 			return nil, stats, fmt.Errorf("creating companion %q: %w", p.block.Name, err)
-		}
-		if obs := c.Observer(); obs != nil {
-			obs.SetRelaying(relaying)
 		}
 		// Bound to this companion's id, so it can never answer with another node's channels.
 		c.SetTelemetry(telemetry.MapFor(store.TelemetryNode{Kind: store.NodeKindCompanion, ID: p.block.ID}))
@@ -486,34 +493,15 @@ func reloadCompanions(ctx context.Context, oldCfg, newCfg *config.Config, runnin
 		slog.Info("started companion", "companion", p.block.Name)
 	}
 
-	// Reused instances kept their observer across the reload, so they need the current value too.
-	for _, c := range companions {
-		if obs := c.Observer(); obs != nil {
-			obs.SetRelaying(relaying)
-		}
-	}
-
 	return companions, stats, nil
 }
 
-// effectiveCompanionConfigs injects the single top-level mqtt block into the companion named by mqtt.node (the first when unset).
+// effectiveCompanionConfigs resolves inherited settings into each block, so a change to a global default shows in the reload diff.
 func effectiveCompanionConfigs(cfg *config.Config) []config.CompanionConfig {
-	mqttNode := ""
-	if cfg.Mqtt.IsEnabled() && len(cfg.Mqtt.Brokers) > 0 {
-		if cfg.Mqtt.Node != nil && *cfg.Mqtt.Node != "" {
-			mqttNode = *cfg.Mqtt.Node
-		} else if len(cfg.Companions) > 0 {
-			mqttNode = cfg.Companions[0].Name
-		}
-	}
-
 	pathHash := cfg.PathHashSizeOr()
 	blocks := make([]config.CompanionConfig, len(cfg.Companions))
 	copy(blocks, cfg.Companions)
 	for i := range blocks {
-		if blocks[i].Name == mqttNode && mqttNode != "" {
-			blocks[i].Mqtt = cfg.Mqtt
-		}
 		if blocks[i].PathHashSize == nil {
 			blocks[i].PathHashSize = &pathHash
 		}
@@ -606,14 +594,14 @@ func hydratePeerTables(ctx context.Context, db *store.Store, companions []*compa
 }
 
 // reconnectModem performs a single modem.Setup attempt and rebuilds the mux, dead-watcher and packet logger.
-func reconnectModem(ctx context.Context, cfg *config.Config, db *store.Store, srv *api.Server, reconnectCh chan struct{}, compReg *companionRegistry) (*modem.State, *node.RadioMux, error) {
+func reconnectModem(ctx context.Context, cfg *config.Config, db *store.Store, srv *api.Server, reconnectCh chan struct{}, mqttObs *atomic.Pointer[mqtt.Observer]) (*modem.State, *node.RadioMux, error) {
 	ms, err := modem.Setup(ctx, cfg)
 	if err != nil {
 		return nil, nil, err
 	}
 	ms.StartDeadWatcher(reconnectCh)
 	mux := node.NewRadioMux(ms.Modem, modem.MuxOptions(ms)...)
-	wirePacketLogger(mux, ms.Modem, db, srv, compReg)
+	wirePacketLogger(mux, ms.Modem, db, srv, mqttObs)
 	return ms, mux, nil
 }
 

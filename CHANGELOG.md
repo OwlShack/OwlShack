@@ -7,6 +7,9 @@ top until tagged.
 
 ### Added
 
+- **Your repeater can feed MQTT.** On the MQTT page, pick your repeater as the node, and LetsMesh,
+  CoreScope and other brokers see the feed under the repeater's own name and key. The node that
+  feeds MQTT can't be deleted while MQTT is on; pick another node first.
 - **Start a private channel.** In Add channel, Private, press Generate for a new key. The dialog
   shows the key and a QR code to share it; the MeshCore app adds the channel by scanning the code.
 - **See which channels are private.** The Messages list and a channel's header show whether it is

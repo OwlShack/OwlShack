@@ -229,6 +229,7 @@ func seedForPrune(t *testing.T, opts PruneOptions) *sql.DB {
 		(unixepoch('now','-1 days'),'p1','battery',1),
 		(unixepoch('now','-40 days'),'p1','battery',2)`)
 	exec(`INSERT INTO repeater (id, name, private_key) VALUES (1,'rptr','cc')`)
+	exec(`INSERT INTO mqtt_settings (id, node_kind) VALUES (1,'repeater')`)
 	exec(`INSERT INTO sensors (id, provider, kind, name) VALUES (1,'i2c','shtc3','air')`)
 	exec(`INSERT INTO telemetry_map (node_kind, node_id, channel, lpp_type, sensor_id, metric) VALUES
 		('companion',1,2,103,1,'temperature'),
@@ -482,5 +483,19 @@ func TestPruneBackup_KeepsRepeaterMap(t *testing.T) {
 	})
 	if n := count(t, db, "SELECT COUNT(*) FROM telemetry_map WHERE node_kind='repeater'"); n != 1 {
 		t.Errorf("repeater map rows = %d, want 1", n)
+	}
+}
+
+// MQTT fed by a repeater the backup leaves out would stop the restored install starting, so it falls back to a companion.
+func TestPruneBackup_MqttFollowsTheRepeater(t *testing.T) {
+	for _, keep := range []bool{true, false} {
+		db := seedForPrune(t, PruneOptions{CompanionIDs: []int64{1}, Repeater: keep})
+		var kind string
+		if err := db.QueryRow("SELECT node_kind FROM mqtt_settings WHERE id = 1").Scan(&kind); err != nil {
+			t.Fatal(err)
+		}
+		if want := map[bool]string{true: "repeater", false: "companion"}[keep]; kind != want {
+			t.Errorf("repeater kept %v: mqtt fed by %q, want %q", keep, kind, want)
+		}
 	}
 }

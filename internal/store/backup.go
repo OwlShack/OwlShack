@@ -223,6 +223,7 @@ func PruneBackup(ctx context.Context, path string, opts PruneOptions) error {
 		{"DELETE FROM mqtt_brokers", opts.Mqtt},
 		{"DELETE FROM repeater", opts.Repeater},
 		{"DELETE FROM repeater_acl", opts.Repeater},
+		{"UPDATE mqtt_settings SET node_kind = 'companion' WHERE node_kind = 'repeater'", opts.Repeater},
 		{"DELETE FROM discovered_peers", opts.Peers},
 		{"DELETE FROM hop_pins", opts.Peers}, // a pin names a peer, so it goes with them
 	}
