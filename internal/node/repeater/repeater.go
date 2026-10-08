@@ -11,9 +11,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
-	"github.com/meshcore-go/meshcore-go/hardware"
-	"github.com/meshcore-go/meshcore-go/node"
+	meshcore "github.com/OwlShack/meshcore-go"
+	"github.com/OwlShack/meshcore-go/hardware"
+	"github.com/OwlShack/meshcore-go/node"
 
 	"github.com/OwlShack/OwlShack/internal/api"
 	"github.com/OwlShack/OwlShack/internal/config"
@@ -185,6 +185,8 @@ func NewRepeater(cfg config.RepeaterConfig, mux *node.RadioMux, st *store.Store,
 		node.WithExtraAckTransmitCount(r.extraAcks),
 		// A node with no allowForward handler never relays — this is what makes it a repeater.
 		node.WithAllowForwardHandler(r.allowForward),
+		// Firmware repeaters never answer a client's flood PATH with their own; handlePath learns the route.
+		node.WithoutReciprocalPath(),
 	}
 	// Registering named scopes is what lets FindFloodMatch relay their transport-flood packets.
 	named, wildcardFlags := regionsFromConfig(cfg.Regions)
@@ -193,7 +195,8 @@ func NewRepeater(cfg config.RepeaterConfig, mux *node.RadioMux, st *store.Store,
 	}
 	r.node = node.New(id, radio, opts...)
 	r.routeStats = r.node.RouteStats
-	r.node.Regions().SetWildcardFlags(wildcardFlags) // "*" entry ⇒ relay unscoped flood; absent ⇒ don't
+	r.node.Regions().SetWildcardFlags(wildcardFlags)
+	r.node.Regions().SetDefault(cfg.DefaultRegion) // the scope ReplyScope falls back to
 
 	r.registerHandlers()
 
@@ -285,7 +288,7 @@ func (r *Repeater) Stop() error {
 	return nil
 }
 
-// regionsFromConfig keys each named region as the firmware's getTransportKeysFor does; "*" is never a named region.
+// regionsFromConfig keys each named region as the firmware's getTransportKeysFor does (NewRegion); "*" is never a named region.
 func regionsFromConfig(cfg []config.RepeaterRegion) (named []*meshcore.Region, wildcardFlags uint8) {
 	for _, rg := range cfg {
 		if rg.Name == config.WildcardRegion {
@@ -294,11 +297,7 @@ func regionsFromConfig(cfg []config.RepeaterRegion) (named []*meshcore.Region, w
 			}
 			continue
 		}
-		key, ok := regionKey(rg.Name)
-		if !ok {
-			continue
-		}
-		reg := meshcore.NewRegionFromKey(rg.Name, key)
+		reg := meshcore.NewRegion(rg.Name)
 		if rg.DenyFlood {
 			reg.Flags |= meshcore.RegionDenyFlood
 		}
@@ -307,23 +306,12 @@ func regionsFromConfig(cfg []config.RepeaterRegion) (named []*meshcore.Region, w
 	return named, wildcardFlags
 }
 
-// regionKey is RegionMap::getTransportKeysFor: "#name" hashes as given, a bare name as "#name", and a "$" private region has no key we can know.
-func regionKey(name string) (meshcore.RegionKey, bool) {
-	switch {
-	case strings.HasPrefix(name, "$"):
-		return meshcore.RegionKey{}, false
-	case strings.HasPrefix(name, "#"):
-		return meshcore.DeriveRegionKey(name), true
-	default:
-		return meshcore.DeriveRegionKey("#" + name), true
-	}
-}
-
 // ApplyRegions updates regions in place so a region-only edit doesn't restart the node and wipe neighbours, routes and counters.
 func (r *Repeater) ApplyRegions(regions []config.RepeaterRegion, defaultRegion, homeRegion string) {
 	named, wildcardFlags := regionsFromConfig(regions)
 	rm := r.node.Regions()
 	rm.SetWildcardFlags(wildcardFlags)
+	rm.SetDefault(defaultRegion)
 
 	want := make(map[string]*meshcore.Region, len(named))
 	for _, rg := range named {

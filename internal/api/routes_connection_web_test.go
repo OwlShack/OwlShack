@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/OwlShack/OwlShack/internal/store"
-	meshcore "github.com/meshcore-go/meshcore-go"
+	meshcore "github.com/OwlShack/meshcore-go"
 )
 
 func webKey(b byte) []byte { return bytes.Repeat([]byte{b}, meshcore.PubKeySize) }

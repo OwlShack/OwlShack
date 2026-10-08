@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshcore-go/meshcore-go/hardware/openhop"
+	"github.com/OwlShack/meshcore-go/hardware/openhop"
 )
 
 // fakeOpenhop answers the handshake and STATUS until hung, speaking the real frame format.

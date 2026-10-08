@@ -8,15 +8,14 @@ import (
 	"fmt"
 	"time"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
-	"github.com/meshcore-go/meshcore-go/node"
+	meshcore "github.com/OwlShack/meshcore-go"
+	"github.com/OwlShack/meshcore-go/node"
 
 	"github.com/OwlShack/OwlShack/internal/store"
 )
 
-// MaxDMTextBytes is the firmware's MAX_TEXT_LEN (10 * CIPHER_BLOCK_SIZE), less the 2 bytes a
-// retry past attempt 3 appends, so a message that sends can also be retried.
-const MaxDMTextBytes = 10*16 - 2
+// MaxDMTextBytes is the longest DM that every retry still fits, so a message that sends can also be retried.
+const MaxDMTextBytes = meshcore.MaxRetryTextLen
 
 // uniqueTimestamp mirrors the firmware's getCurrentTimeUnique(): a remote node drops a second post sharing a timestamp as a retry.
 func (c *Companion) uniqueTimestamp() uint32 { return c.repeaters.UniqueTimestamp() }

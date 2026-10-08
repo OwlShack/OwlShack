@@ -9,7 +9,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/meshcore-go/meshcore-go/hardware/sx12xx"
+	"github.com/OwlShack/meshcore-go/hardware/sx12xx"
 	"periph.io/x/conn/v3/physic"
 )
 

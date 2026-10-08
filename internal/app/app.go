@@ -29,8 +29,8 @@ import (
 	"github.com/OwlShack/OwlShack/internal/store"
 	"github.com/OwlShack/OwlShack/internal/trigger"
 	"github.com/OwlShack/OwlShack/web"
-	meshcore "github.com/meshcore-go/meshcore-go"
-	"github.com/meshcore-go/meshcore-go/node"
+	meshcore "github.com/OwlShack/meshcore-go"
+	"github.com/OwlShack/meshcore-go/node"
 )
 
 const defaultListenAddr = ":8080"

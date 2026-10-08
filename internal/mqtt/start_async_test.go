@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/OwlShack/OwlShack/internal/config"
-	"github.com/meshcore-go/meshcore-go/node"
+	"github.com/OwlShack/meshcore-go/node"
 )
 
 // listenBlackhole accepts connections and never answers, which is what a firewalled or wedged broker

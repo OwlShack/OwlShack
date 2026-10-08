@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
+	meshcore "github.com/OwlShack/meshcore-go"
 )
 
 func status(id int64, name string, at time.Time, err string, readings ...Reading) Status {

@@ -16,8 +16,8 @@ import (
 	"github.com/OwlShack/OwlShack/internal/sensor"
 	"github.com/OwlShack/OwlShack/internal/store"
 	"github.com/OwlShack/OwlShack/internal/trigger"
-	meshcore "github.com/meshcore-go/meshcore-go"
-	"github.com/meshcore-go/meshcore-go/node"
+	meshcore "github.com/OwlShack/meshcore-go"
+	"github.com/OwlShack/meshcore-go/node"
 )
 
 // repeaterReqTimeout bounds every repeater round-trip initiated from the API.

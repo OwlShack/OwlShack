@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
+	meshcore "github.com/OwlShack/meshcore-go"
 )
 
 // newTestStore opens a fresh temp-file store per test, closed at test end.

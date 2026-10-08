@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
-	"github.com/meshcore-go/meshcore-go/node"
+	meshcore "github.com/OwlShack/meshcore-go"
+	"github.com/OwlShack/meshcore-go/node"
 
 	"github.com/OwlShack/OwlShack/internal/config"
 	"github.com/OwlShack/OwlShack/internal/sensor"
@@ -178,7 +178,7 @@ func TestRegionsFromConfig(t *testing.T) {
 		{"* deny", []config.RepeaterRegion{{Name: "*", DenyFlood: true}}, nil, true},
 		{"named + *", []config.RepeaterRegion{{Name: "alpha"}, {Name: "*"}}, []string{"alpha"}, false},
 		{"named only ⇒ allow unscoped", []config.RepeaterRegion{{Name: "alpha"}}, []string{"alpha"}, false},
-		{"private region has no key", []config.RepeaterRegion{{Name: "$p"}, {Name: "alpha"}}, []string{"alpha"}, false},
+		{"private region kept, keyless", []config.RepeaterRegion{{Name: "$p"}, {Name: "alpha"}}, []string{"$p", "alpha"}, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -217,6 +217,14 @@ func TestRegionKeyMatchesFirmware(t *testing.T) {
 	}
 }
 
+// A "$" private region needs keys we cannot load, so it has none and never matches, as on firmware without them.
+func TestPrivateRegionNeverMatches(t *testing.T) {
+	named, _ := regionsFromConfig([]config.RepeaterRegion{{Name: "$p"}})
+	if len(named) != 1 || !named[0].Key.IsZero() {
+		t.Fatalf("$p = %+v, want one keyless region", named)
+	}
+}
+
 // TestClearStats zeroes the counters.
 func TestClearStats(t *testing.T) {
 	r := &Repeater{}
@@ -238,7 +246,7 @@ func TestTelemetryBody(t *testing.T) {
 	r.batteryMV.Store(4168)
 	r.haveBattery.Store(true)
 
-	body, ok := r.buildReqResponse(&store.RepeaterACLEntry{Permissions: permAdmin}, reqTypeGetTelemetryData, nil, sensor.MaxReplyBody(nil))
+	body, ok := r.buildReqResponse(&store.RepeaterACLEntry{Permissions: permAdmin}, meshcore.ReqTypeGetTelemetryData, nil, sensor.MaxReplyBody(nil))
 	if !ok {
 		t.Fatal("telemetry request answered nothing")
 	}
@@ -256,7 +264,7 @@ func TestTelemetryBody(t *testing.T) {
 
 	r.mcuTempC.Store(227)
 	r.haveMCUTemp.Store(true)
-	body, _ = r.buildReqResponse(&store.RepeaterACLEntry{Permissions: permAdmin}, reqTypeGetTelemetryData, nil, sensor.MaxReplyBody(nil))
+	body, _ = r.buildReqResponse(&store.RepeaterACLEntry{Permissions: permAdmin}, meshcore.ReqTypeGetTelemetryData, nil, sensor.MaxReplyBody(nil))
 	readings, err = meshcore.LPPDecode(body)
 	if err != nil {
 		t.Fatalf("LPPDecode with temp: %v", err)
@@ -895,7 +903,7 @@ func TestTelemetryHonoursTheRequestersInverseMask(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			body, ok := newRepeater().buildReqResponse(
-				&store.RepeaterACLEntry{Permissions: permGuest}, reqTypeGetTelemetryData, tc.params, sensor.MaxReplyBody(nil))
+				&store.RepeaterACLEntry{Permissions: permGuest}, meshcore.ReqTypeGetTelemetryData, tc.params, sensor.MaxReplyBody(nil))
 			if !ok {
 				t.Fatal("telemetry request was not answered; the firmware answers a guest too")
 			}
@@ -921,7 +929,7 @@ func TestTelemetryReportsZeroVoltsWhenTheHostHasNoBattery(t *testing.T) {
 	r.mcuTempC.Store(352)
 	r.haveMCUTemp.Store(true)
 
-	body, _ := r.buildReqResponse(&store.RepeaterACLEntry{Permissions: permAdmin}, reqTypeGetTelemetryData, nil, sensor.MaxReplyBody(nil))
+	body, _ := r.buildReqResponse(&store.RepeaterACLEntry{Permissions: permAdmin}, meshcore.ReqTypeGetTelemetryData, nil, sensor.MaxReplyBody(nil))
 	readings, err := meshcore.LPPDecode(body)
 	if err != nil {
 		t.Fatalf("LPPDecode: %v", err)
@@ -934,7 +942,7 @@ func TestTelemetryReportsZeroVoltsWhenTheHostHasNoBattery(t *testing.T) {
 	// A board that does report a battery still publishes it.
 	r.batteryMV.Store(4168)
 	r.haveBattery.Store(true)
-	body, _ = r.buildReqResponse(&store.RepeaterACLEntry{Permissions: permAdmin}, reqTypeGetTelemetryData, nil, sensor.MaxReplyBody(nil))
+	body, _ = r.buildReqResponse(&store.RepeaterACLEntry{Permissions: permAdmin}, meshcore.ReqTypeGetTelemetryData, nil, sensor.MaxReplyBody(nil))
 	readings, _ = meshcore.LPPDecode(body)
 	// LPP voltage has 0.01 V resolution and the encoder rounds, so 4168 mV comes back as 4.17.
 	if len(readings) != 2 || readings[0].Value != 4.17 {

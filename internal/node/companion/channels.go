@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
-	"github.com/meshcore-go/meshcore-go/node"
+	meshcore "github.com/OwlShack/meshcore-go"
+	"github.com/OwlShack/meshcore-go/node"
 
 	"github.com/OwlShack/OwlShack/internal/config"
 )
@@ -115,11 +115,7 @@ func isHashtagChannel(ch *meshcore.ChannelEntry) bool {
 		return derived.Hash == ch.Hash
 	}
 	if strings.EqualFold(ch.Name, "Public") {
-		pub, err := meshcore.NewChannelFromBase64("Public", "izOH6cXN6mrJ5e26oRXNcg==")
-		if err != nil {
-			return false
-		}
-		return pub.Hash == ch.Hash
+		return meshcore.PublicChannel().Hash == ch.Hash
 	}
 	return false
 }

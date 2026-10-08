@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshcore-go/meshcore-go/hardware"
+	"github.com/OwlShack/meshcore-go/hardware"
 )
 
 // Zero radio params must give 0 rather than a fabricated number the caller would publish.
@@ -87,5 +87,43 @@ func TestKissStatsProvider_AnErrorReplyIsAnAnswer(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatal("an HW_RESP_ERROR reply did not count as the board answering")
 		}
+	}
+}
+
+// answeringFeed is a KISS board that answers each stats query.
+type answeringFeed struct{ frameFeed }
+
+func (f *answeringFeed) Send(b []byte) error {
+	if len(b) < 3 || b[1] != hardware.KISS_CMD_SETHARDWARE {
+		return nil
+	}
+	reply := map[byte][]byte{
+		hardware.HW_CMD_GET_STATS:       make([]byte, 12),
+		hardware.HW_CMD_GET_NOISE_FLOOR: {0x9c, 0xff}, // -100
+		hardware.HW_CMD_GET_BATTERY:     {0x04, 0x10}, // 4100
+		hardware.HW_CMD_GET_MCU_TEMP:    {0xd7, 0x00}, // 21.5
+	}[b[2]]
+	if reply != nil {
+		go f.handler(&hardware.KissFrame{Command: hardware.KISS_CMD_SETHARDWARE, Data: append([]byte{hardware.HwResp(b[2])}, reply...)})
+	}
+	return nil
+}
+
+// A query returns as soon as its answer is read, before the reply handlers run, so the first poll must report what the queries returned.
+func TestKissStatsProvider_FirstPollHasItsAnswers(t *testing.T) {
+	feed := &answeringFeed{frameFeed{dead: make(chan struct{})}}
+	km := hardware.NewKissModem(feed)
+	if err := km.Connect(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	release := make(chan struct{})
+	km.OnHwResponse(hardware.HwResp(hardware.HW_CMD_GET_MCU_TEMP), func(byte, []byte) { <-release })
+	defer km.Close()
+	defer close(release)
+	p := NewKissStatsProvider(km, RadioInfo{})
+
+	ds := p.Stats(t.Context())
+	if ds.NoiseFloor != -100 || !ds.HaveBattery || ds.BatteryMV != 4100 || !ds.HaveMCUTemp || ds.MCUTempC != 21.5 {
+		t.Errorf("first poll = %+v, want noise -100, battery 4100, MCU 21.5", ds)
 	}
 }

@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/meshcore-go/meshcore-go/hardware/openhop"
+	"github.com/OwlShack/meshcore-go/hardware/openhop"
 )
 
 // openhopStatsProvider reads the openHop firmware's own counters. Unlike KISS, one STATUS command

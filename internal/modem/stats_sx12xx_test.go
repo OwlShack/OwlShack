@@ -3,8 +3,8 @@ package modem
 import (
 	"testing"
 
-	"github.com/meshcore-go/meshcore-go/hardware"
-	"github.com/meshcore-go/meshcore-go/hardware/sx12xx"
+	"github.com/OwlShack/meshcore-go/hardware"
+	"github.com/OwlShack/meshcore-go/hardware/sx12xx"
 )
 
 var _ StatsProvider = (*sx12xxStatsProvider)(nil)

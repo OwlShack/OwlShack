@@ -6,8 +6,8 @@ import (
 	"math"
 	"time"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
-	"github.com/meshcore-go/meshcore-go/node"
+	meshcore "github.com/OwlShack/meshcore-go"
+	"github.com/OwlShack/meshcore-go/node"
 )
 
 // floodPathLength encodes the path-hash width in BYTES as (size-1) in PathLength's top 2 bits; clamped, a 0 would underflow to 0xC0.
@@ -15,7 +15,7 @@ func floodPathLength(pathHashSize int) byte {
 	if pathHashSize < 1 || pathHashSize > 3 {
 		pathHashSize = 1
 	}
-	return byte((pathHashSize - 1) << 6)
+	return meshcore.MakePathLen(uint8(pathHashSize), 0)
 }
 
 // SendSelf transmits a self-advert: flood is mesh-wide, otherwise zero-hop to direct neighbours only; scope wraps a flood in a transport region.
@@ -56,9 +56,8 @@ func SendSelf(n *node.Node, log *slog.Logger, advType, name string, lat, lon *fl
 		PathLength: pathLength,
 		Payload:    payload,
 	}
-	if flood && scope != nil { // scoped flood advert (firmware sendFloodScoped(default_scope, ...)); code 2 stays 0
-		pkt.Header = meshcore.MakeHeader(meshcore.RouteTypeTransportFlood, meshcore.PayloadTypeAdvert, 0)
-		pkt.TransportCode1 = scope.CalcTransportCode(pkt)
+	if flood {
+		pkt.SetScope(scope) // firmware sendFloodScoped(default_scope, ...); nil stays unscoped
 	}
 
 	mode := "flood"

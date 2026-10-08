@@ -11,7 +11,7 @@ import (
 	"github.com/OwlShack/OwlShack/internal/modem"
 	"github.com/OwlShack/OwlShack/internal/node/repeater"
 	"github.com/OwlShack/OwlShack/internal/store"
-	"github.com/meshcore-go/meshcore-go/node"
+	"github.com/OwlShack/meshcore-go/node"
 )
 
 // At most one repeater runs — a radio hosts one relay identity — so the lifecycle is start/stop, not set reconciliation.

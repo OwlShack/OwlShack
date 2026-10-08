@@ -3,7 +3,7 @@ package api
 import (
 	"fmt"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
+	meshcore "github.com/OwlShack/meshcore-go"
 )
 
 type ChannelInfo struct {

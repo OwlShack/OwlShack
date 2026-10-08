@@ -3,7 +3,7 @@ package meshpath
 import (
 	"testing"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
+	meshcore "github.com/OwlShack/meshcore-go"
 )
 
 // A zero-hop advert's length byte is always 0, so reading its size would call every direct neighbour a 1-byte node.

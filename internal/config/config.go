@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/meshcore-go/meshcore-go/hardware/openhop"
-	"github.com/meshcore-go/meshcore-go/node"
+	"github.com/OwlShack/meshcore-go/hardware/openhop"
+	"github.com/OwlShack/meshcore-go/node"
 	"github.com/pelletier/go-toml/v2"
 	"gopkg.in/yaml.v3"
 )

@@ -15,9 +15,9 @@ import (
 	"github.com/OwlShack/OwlShack/internal/config"
 	"github.com/OwlShack/OwlShack/internal/logging"
 	"github.com/OwlShack/OwlShack/internal/modem"
+	meshcore "github.com/OwlShack/meshcore-go"
+	"github.com/OwlShack/meshcore-go/node"
 	paho "github.com/eclipse/paho.mqtt.golang"
-	meshcore "github.com/meshcore-go/meshcore-go"
-	"github.com/meshcore-go/meshcore-go/node"
 )
 
 // publishJob keeps the publish call off the RX hot path, so a stalled broker can't back-pressure the modem dispatch goroutine.

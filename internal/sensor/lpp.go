@@ -6,7 +6,7 @@ import (
 	"math"
 	"slices"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
+	meshcore "github.com/OwlShack/meshcore-go"
 )
 
 // ChannelSelf is the channel the firmware keeps for a node's own readings; sensors start above it.
@@ -28,11 +28,10 @@ const (
 
 // Reply framing, from the firmware's reply_data buffer and the requesting companion's push to its app.
 const (
-	maxPacketPayload = 184 // MAX_PACKET_PAYLOAD
-	respHeaderLen    = 4   // destination, source and the two MAC bytes
-	cipherBlock      = 16
-	maxFrame         = 176 // MAX_FRAME_SIZE: the requester's companion drops a longer frame to its app
-	pushHeaderLen    = 8   // PUSH_CODE_TELEMETRY_RESPONSE, a reserved byte and a 6-byte key prefix
+	respHeaderLen = 4 // destination, source and the two MAC bytes
+	cipherBlock   = 16
+	maxFrame      = 176 // MAX_FRAME_SIZE: the requester's companion drops a longer frame to its app
+	pushHeaderLen = 8   // PUSH_CODE_TELEMETRY_RESPONSE, a reserved byte and a 6-byte key prefix
 	// ReplyTagLen is the client timestamp a reply reflects back, ahead of the body.
 	ReplyTagLen = 4
 )
@@ -43,7 +42,7 @@ func MaxReplyBody(pkt *meshcore.Packet) int {
 	if pkt != nil && pkt.IsRouteFlood() {
 		route = 1 + len(pkt.Path) + 1 // path length byte, the path, the wrapped payload type
 	}
-	plain := min(maxPacketPayload-respHeaderLen, maxFrame-pushHeaderLen+route+ReplyTagLen) / cipherBlock * cipherBlock
+	plain := min(meshcore.MaxPacketPayload-respHeaderLen, maxFrame-pushHeaderLen+route+ReplyTagLen) / cipherBlock * cipherBlock
 	return plain - route - ReplyTagLen
 }
 

@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
-	"github.com/meshcore-go/meshcore-go/node"
+	meshcore "github.com/OwlShack/meshcore-go"
+	"github.com/OwlShack/meshcore-go/node"
 
 	"github.com/OwlShack/OwlShack/internal/buildinfo"
 	"github.com/OwlShack/OwlShack/internal/config"
@@ -21,9 +21,7 @@ import (
 )
 
 const (
-	txtTypePlain   = 0 // legacy plain text
-	txtTypeCliData = 1 // CLI command / response
-	cliReplyDelay  = 600 * time.Millisecond
+	cliReplyDelay = 600 * time.Millisecond
 	// txtAckDelay mirrors the firmware TXT_ACK_DELAY for legacy plain-text CLI.
 	txtAckDelay = 200 * time.Millisecond
 	// Firmware sendSelfAdvertisement(1500, ...): hold a CLI-triggered advert so the reply transmits first.
@@ -67,7 +65,7 @@ func (r *Repeater) handleCLI(pkt *meshcore.Packet) {
 	}
 	isRetry := ts == client.LastTimestamp
 	flags := plain[4] >> 2
-	if flags != txtTypeCliData && flags != txtTypePlain {
+	if flags != meshcore.TxtTypeCLIData && flags != meshcore.TxtTypePlain {
 		return
 	}
 
@@ -81,7 +79,7 @@ func (r *Repeater) handleCLI(pkt *meshcore.Packet) {
 	}
 
 	command := cString(plain[5:])
-	if flags == txtTypePlain { // legacy CLI gets an ack (firmware TXT_TYPE_PLAIN branch), even on retries
+	if flags == meshcore.TxtTypePlain { // legacy CLI gets an ack (firmware TXT_TYPE_PLAIN branch), even on retries
 		r.sendLegacyAck(pkt, clientPub, plain[:5+len(command)])
 	}
 	if isRetry {
@@ -379,7 +377,7 @@ func (r *Repeater) sendText(reqPkt *meshcore.Packet, clientPub [32]byte, secret 
 		ts = r.uniqueTimestamp()
 	}
 	me := r.node.Identity().PublicKey()
-	plaintext := meshcore.BuildTextPlaintext(time.Unix(int64(ts), 0), txtTypeCliData<<2, []byte(text))
+	plaintext := meshcore.BuildTextPlaintext(time.Unix(int64(ts), 0), meshcore.TxtTypeCLIData<<2, []byte(text))
 	payload, err := encPacket(secret, func(mac [2]byte, enc []byte) ([]byte, error) {
 		return (&meshcore.TextMessage{Destination: clientPub[0], Source: me[0], MAC: mac, EncryptedPayload: enc}).ToBytes()
 	}, plaintext)
@@ -819,7 +817,7 @@ func (r *Repeater) neighborsList() string {
 		if b.Len() > 0 {
 			b.WriteByte('\n')
 		}
-		fmt.Fprintf(&b, "%s:%d:%d", hex.EncodeToString(n.pubkey[:4]), int64(now.Sub(n.heard).Seconds()), int8(n.snr*4))
+		fmt.Fprintf(&b, "%s:%d:%d", hex.EncodeToString(n.pubkey[:4]), int64(now.Sub(n.heard).Seconds()), meshcore.SNRToWire(float32(n.snr)))
 	}
 	return b.String()
 }

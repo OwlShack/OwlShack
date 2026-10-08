@@ -6,7 +6,7 @@ import (
 	"strconv"
 
 	"github.com/OwlShack/OwlShack/internal/store"
-	meshcore "github.com/meshcore-go/meshcore-go"
+	meshcore "github.com/OwlShack/meshcore-go"
 )
 
 // TimestampLayout is RFC 3339 with exactly three fractional digits. Packet observations are

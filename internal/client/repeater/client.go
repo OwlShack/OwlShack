@@ -10,28 +10,31 @@ import (
 	"sync"
 	"time"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
-	"github.com/meshcore-go/meshcore-go/node"
+	meshcore "github.com/OwlShack/meshcore-go"
+	"github.com/OwlShack/meshcore-go/node"
 
 	"github.com/OwlShack/OwlShack/internal/store"
 )
 
 const (
-	reqTypeGetStatus        = 0x01
-	reqTypeKeepAlive        = 0x02 // rooms: resume the post push stream
-	reqTypeGetTelemetryData = 0x03
-	reqTypeGetAvgMinMax     = 0x04 // sensors only
-	reqTypeGetAccessList    = 0x05
-	reqTypeGetNeighbors     = 0x06
-	reqTypeGetOwnerInfo     = 0x07
-	txtTypeCliData          = 1
-	cliPrefixLen            = 3
-	respServerLoginOK       = 0 // login reply byte 4
+	cliPrefixLen = 3
 )
 
-// isLoginReply: byte 4 alone also matches a status body with a zero batt low byte, so check byte 5's always-zero legacy field too.
-func isLoginReply(data []byte) bool {
-	return len(data) >= 13 && data[4] == respServerLoginOK && data[5] == 0
+// isLoginReply takes every firmware login reply, an old repeater's bare "OK" and a room's keep-alive byte included; a reply
+// echoing a tag we sent that node is that request's answer, which is how a status body that parses as a login is told apart.
+// Only that node's tags count: a login reply opens with the node's clock, which can equal a tag sent elsewhere the same second.
+func (rm *Client) isLoginReply(data []byte, from byte) bool {
+	if len(data) < 4 {
+		return false
+	}
+	rm.pendingMu.Lock()
+	pr, isRequest := rm.pending[binary.LittleEndian.Uint32(data[:4])]
+	rm.pendingMu.Unlock()
+	if isRequest && pr.peerPubKeyByte == from {
+		return false
+	}
+	_, err := meshcore.ParseLoginReply(data[4:])
+	return err == nil
 }
 
 type Session struct {
@@ -152,10 +155,10 @@ func routeForPeer(path []byte, routeHashSize, bytesPerHop uint8) (routeType byte
 		if path == nil {
 			routeType = meshcore.RouteTypeFlood
 		}
-		return routeType, (max(bytesPerHop, 1) - 1) << 6
+		return routeType, meshcore.MakePathLen(max(bytesPerHop, 1), 0)
 	}
 	hs := max(routeHashSize, 1)
-	return meshcore.RouteTypeDirect, (hs-1)<<6 | uint8(len(path)/int(hs))
+	return meshcore.RouteTypeDirect, meshcore.MakePathLen(hs, uint8(len(path)/int(hs)))
 }
 
 func (rm *Client) Session(pubkeyHex string) *Session {
@@ -259,10 +262,9 @@ func (rm *Client) roundtripRequest(peerPub [32]byte, peer *node.Peer, sharedSecr
 	}
 
 	resultCh := make(chan []byte, 1)
-	pr := &pendingRequest{ch: resultCh, created: time.Now()}
+	pr := &pendingRequest{ch: resultCh, created: time.Now(), peerPubKeyByte: peerPub[0]}
 	if storeSecret {
 		pr.sharedSecret = sharedSecret
-		pr.peerPubKeyByte = peerPub[0]
 		pr.peerPubKey = peerPub
 	}
 	rm.pendingMu.Lock()

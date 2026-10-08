@@ -3,7 +3,7 @@ package config
 import (
 	"fmt"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
+	meshcore "github.com/OwlShack/meshcore-go"
 )
 
 // RepeaterConfig is a repeater node we RUN on the mesh; fields mirror the firmware NodePrefs subset (examples/simple_repeater), nil == default resolved by the *Or accessors.

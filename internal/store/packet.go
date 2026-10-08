@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
+	meshcore "github.com/OwlShack/meshcore-go"
 )
 
 // PacketFieldsFromPkt is the single derivation of the hex packet hash and hop path, so stored, broadcast and displayed forms cannot drift.

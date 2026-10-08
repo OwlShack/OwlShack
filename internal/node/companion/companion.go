@@ -8,8 +8,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
-	"github.com/meshcore-go/meshcore-go/node"
+	meshcore "github.com/OwlShack/meshcore-go"
+	"github.com/OwlShack/meshcore-go/node"
 
 	"github.com/OwlShack/OwlShack/internal/api"
 	"github.com/OwlShack/OwlShack/internal/client/repeater"

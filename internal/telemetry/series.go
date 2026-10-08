@@ -4,7 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
+	meshcore "github.com/OwlShack/meshcore-go"
 )
 
 // SeriesEntry is one sensor channel's min/max/avg over the requested window (firmware MinMaxAvg).
@@ -63,16 +63,16 @@ func ParseSeries(data []byte) (*Series, error) {
 	return s, nil
 }
 
-// lppGetFloat mirrors the firmware getFloat: MSB-first, optional two's complement over size*8 bits, divided by the multiplier.
+// lppGetFloat mirrors the firmware getFloat: MSB-first into a uint32, so a value over 4 bytes keeps its low 4, optional two's complement, divided by the multiplier.
 func lppGetFloat(b []byte, mult uint32, signed bool) float64 {
-	var v uint64
+	var v uint32
 	for _, x := range b {
-		v = v<<8 | uint64(x)
+		v = v<<8 | uint32(x)
 	}
 	sign := 1.0
-	// Over 8 bytes the sign bit is unrepresentable (9-byte GPS shifted by 71).
-	if signed && len(b) <= 8 {
-		bit := uint64(1) << (uint(len(b))*8 - 1)
+	// Over 4 bytes the firmware's sign bit shifts out of its 32 bits, so the value never reads as negative.
+	if signed && len(b) <= 4 {
+		bit := uint32(1) << (uint(len(b))*8 - 1)
 		if v&bit == bit {
 			v = (bit << 1) - v
 			sign = -1

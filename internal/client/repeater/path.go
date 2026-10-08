@@ -5,7 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
+	meshcore "github.com/OwlShack/meshcore-go"
 )
 
 type PeerPathInfo struct {

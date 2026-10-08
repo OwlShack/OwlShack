@@ -10,7 +10,7 @@ import (
 
 	"github.com/OwlShack/OwlShack/internal/config"
 	"github.com/OwlShack/OwlShack/internal/modem"
-	meshcore "github.com/meshcore-go/meshcore-go"
+	meshcore "github.com/OwlShack/meshcore-go"
 )
 
 // A broker that never connected sits in o.brokers with a nil paho client, and Stop must survive a second call.

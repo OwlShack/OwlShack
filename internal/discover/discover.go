@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
-	"github.com/meshcore-go/meshcore-go/node"
+	meshcore "github.com/OwlShack/meshcore-go"
+	"github.com/OwlShack/meshcore-go/node"
 )
 
 // Firmware ADV_TYPE_* (AdvertDataHelpers.h); the request's filter byte is a bitmask over these.

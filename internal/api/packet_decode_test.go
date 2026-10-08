@@ -3,7 +3,7 @@ package api
 import (
 	"testing"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
+	meshcore "github.com/OwlShack/meshcore-go"
 )
 
 // The firmware puts the control type in the flags byte's top nibble and the node type in the low one (simple_repeater/MyMesh.cpp:786-809).

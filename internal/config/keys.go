@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
+	meshcore "github.com/OwlShack/meshcore-go"
 )
 
 const seedLen = 32 // ed25519 seed bytes

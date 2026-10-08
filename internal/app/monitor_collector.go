@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
+	meshcore "github.com/OwlShack/meshcore-go"
 
 	"github.com/OwlShack/OwlShack/internal/client/repeater"
 	"github.com/OwlShack/OwlShack/internal/monitor"

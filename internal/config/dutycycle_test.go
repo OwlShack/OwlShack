@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/meshcore-go/meshcore-go/node"
+	"github.com/OwlShack/meshcore-go/node"
 )
 
 // CommonCLI.cpp `set dutycycle` does airtime_factor = (100/dc) - 1, so a SMALLER factor is a HIGHER duty cycle.

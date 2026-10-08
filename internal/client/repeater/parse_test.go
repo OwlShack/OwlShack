@@ -1,11 +1,12 @@
 package repeater
 
 import (
+	"bytes"
 	"encoding/binary"
 	"testing"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
-	"github.com/meshcore-go/meshcore-go/node"
+	meshcore "github.com/OwlShack/meshcore-go"
+	"github.com/OwlShack/meshcore-go/node"
 )
 
 // Pins the OutPath contract: only a nil OutPath floods, and pathLen is (hashSize-1)<<6 | hopCount.
@@ -435,30 +436,42 @@ func TestParseRepeaterAccessListPadding(t *testing.T) {
 	}
 }
 
-// Pins [ts:4][RESP_SERVER_LOGIN_OK=0][0][isAdmin][permissions][rand:4][ver] against tagged REQ responses.
+// Every firmware login reply is taken, and a request's tagged reply is not, even one whose body parses as a login.
 func TestIsLoginReply(t *testing.T) {
 	t.Parallel()
+	const ourTag = 1_700_000_123
 	login := make([]byte, 16) // 13 bytes + block padding
 	binary.LittleEndian.PutUint32(login[:4], 1_700_000_000)
 	login[6], login[7], login[12] = 1, 3, 2
+	roomKeepAlive := bytes.Clone(login)
+	roomKeepAlive[5] = 8 // room servers 2025-01..09 sent a keep-alive interval here
+	legacyOK := append(binary.LittleEndian.AppendUint32(nil, 1_700_000_000), 'O', 'K')
 	status := make([]byte, 64)
-	binary.LittleEndian.PutUint32(status[:4], 1_700_000_000)
-	binary.LittleEndian.PutUint16(status[4:6], 3700) // batt mV
+	binary.LittleEndian.PutUint32(status[:4], ourTag)
+	binary.LittleEndian.PutUint16(status[4:6], 3840) // 0x0F00 mV: low byte 0, so the body parses as a login
 	telem := append([]byte{0, 0, 0, 0, 1, 116, 0x01, 0x72}, make([]byte, 8)...)
 
+	const peer, otherPeer = 0x61, 0x45
+	rm := &Client{pending: map[uint32]*pendingRequest{ourTag: {peerPubKeyByte: peer}}}
+	loginAtOurTag := bytes.Clone(login)
+	binary.LittleEndian.PutUint32(loginAtOurTag[:4], ourTag)
 	tests := []struct {
 		name string
 		data []byte
+		from byte
 		want bool
 	}{
-		{"login reply", login, true},
-		{"status response", status, false},
-		{"telemetry response", telem, false},
-		{"short", login[:7], false},
-		{"nil", nil, false},
+		{"login reply", login, peer, true},
+		{"login whose clock equals a tag sent to another node", loginAtOurTag, otherPeer, true},
+		{"room reply with keep-alive", roomKeepAlive, peer, true},
+		{"old repeater OK", legacyOK, peer, true},
+		{"status answering our request", status, peer, false},
+		{"telemetry response", telem, peer, false},
+		{"short", login[:7], peer, false},
+		{"nil", nil, peer, false},
 	}
 	for _, tt := range tests {
-		if got := isLoginReply(tt.data); got != tt.want {
+		if got := rm.isLoginReply(tt.data, tt.from); got != tt.want {
 			t.Errorf("%s: isLoginReply = %v, want %v", tt.name, got, tt.want)
 		}
 	}

@@ -36,6 +36,12 @@ top until tagged.
 
 ### Fixed
 
+- **A direct message to a contact with no known route is confirmed.** When the reply comes back
+  it shows delivered, and OwlShack learns the route, so the next one goes straight there.
+- **A KISS radio's battery, temperature and noise floor are current.** Each reading showed the one
+  before it, and nothing at all until the second poll after connecting.
+- **Adverts with no name no longer add a contact.** A node that announces itself without a name
+  no longer appears as a blank entry in your contacts and peers.
 - **Settings that follow the level above show it.** A companion's or your repeater's path hash
   size, and your repeater's advert scope, showed an empty box when set to inherit or unscoped.
   They now say what they are set to.

@@ -6,17 +6,16 @@ import (
 	mrand "math/rand/v2"
 	"time"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
-	"github.com/meshcore-go/meshcore-go/node"
+	meshcore "github.com/OwlShack/meshcore-go"
+	"github.com/OwlShack/meshcore-go/node"
 )
 
 // Node discovery (firmware CTL_TYPE_NODE_DISCOVER_REQ/RESP): a zero-hop request whose matching responses become neighbours.
 
 const (
-	advTypeRepeater    = 2                                             // firmware ADV_TYPE_REPEATER
 	discoverReqFlags   = byte(meshcore.ControlSubTypeDiscoverReq << 4) // 0x80, prefix_only=0
 	discoverWindow     = 60 * time.Second                              // collect responses this long (firmware)
-	discoverTypeFilter = byte(1 << advTypeRepeater)                    // discover repeaters
+	discoverTypeFilter = byte(1 << meshcore.AdvertTypeRepeater)        // discover repeaters
 )
 
 // sendDiscover broadcasts a zero-hop NODE_DISCOVER_REQ; control data is [filter:1][tag:4][since:4].
@@ -66,7 +65,7 @@ func (r *Repeater) handleControl(pkt *meshcore.Packet) {
 // answerDiscover replies [flags=0x90|type][snr x4][tag:4][pubkey], gated on relaying being enabled and rate-limited 4/2min.
 func (r *Repeater) answerDiscover(pkt *meshcore.Packet, ctl *meshcore.Control) {
 	req, err := ctl.DiscoverRequest()
-	if err != nil || req.TypeFilter&(1<<advTypeRepeater) == 0 {
+	if err != nil || req.TypeFilter&(1<<meshcore.AdvertTypeRepeater) == 0 {
 		return // not asking about repeaters
 	}
 	if r.cfg.IsFwdDisabled() || !r.discoverLimiter.allow() {
@@ -76,8 +75,8 @@ func (r *Repeater) answerDiscover(pkt *meshcore.Packet, ctl *meshcore.Control) {
 
 	pub := r.node.Identity().PublicKeyBytes()
 	data := make([]byte, 5, 5+len(pub))
-	if pkt.HasSignalInfo { // firmware packet->_snr: (int8_t)(snr*4), truncated
-		data[0] = byte(int8(pkt.SNR * 4))
+	if pkt.HasSignalInfo {
+		data[0] = byte(meshcore.SNRToWire(pkt.SNR))
 	}
 	binary.LittleEndian.PutUint32(data[1:5], req.Tag)
 	data = append(data, pub[:]...)
@@ -85,7 +84,7 @@ func (r *Repeater) answerDiscover(pkt *meshcore.Packet, ctl *meshcore.Control) {
 		data = data[:5+8] // firmware replies with an 8-byte pubkey prefix
 	}
 	payload, err := (&meshcore.Control{
-		Flags: byte(meshcore.ControlSubTypeDiscoverResp<<4 | advTypeRepeater),
+		Flags: byte(meshcore.ControlSubTypeDiscoverResp<<4 | meshcore.AdvertTypeRepeater),
 		Data:  data,
 	}).ToBytes()
 	if err != nil {
@@ -109,7 +108,7 @@ func (r *Repeater) answerDiscover(pkt *meshcore.Packet, ctl *meshcore.Control) {
 // recordDiscoverResp stores the neighbour at the SNR *we* heard it at, not the byte it reports (firmware putNeighbour).
 func (r *Repeater) recordDiscoverResp(pkt *meshcore.Packet, ctl *meshcore.Control) {
 	resp, err := ctl.DiscoverResponse()
-	if err != nil || resp.NodeType != advTypeRepeater || len(resp.PubKey) < 32 {
+	if err != nil || resp.NodeType != meshcore.AdvertTypeRepeater || len(resp.PubKey) < 32 {
 		return
 	}
 

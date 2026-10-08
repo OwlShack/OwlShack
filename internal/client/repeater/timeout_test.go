@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
+	meshcore "github.com/OwlShack/meshcore-go"
 )
 
 // fakeStats reports a fixed airtime, standing in for the modem's radio params.

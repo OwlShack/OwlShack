@@ -4,12 +4,13 @@ import (
 	"context"
 	"encoding/binary"
 	"log/slog"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/OwlShack/OwlShack/internal/logging"
-	"github.com/meshcore-go/meshcore-go/hardware"
+	"github.com/OwlShack/meshcore-go/hardware"
 )
 
 type RadioInfo struct {
@@ -102,6 +103,9 @@ type kissStatsProvider struct {
 // one probe interval so a single dropped reply does not flap the value in and out of the payload.
 const StaleReadingAfter = 45 * time.Second
 
+// kissQueryTimeout bounds one stats poll's four board queries together.
+const kissQueryTimeout = 3 * time.Second
+
 // ConnectedAt is when this link was set up, the start of a silence for a board that has never answered.
 func (p *kissStatsProvider) ConnectedAt() time.Time { return p.startTime }
 
@@ -178,28 +182,34 @@ func (p *kissStatsProvider) PacketScore(snrDB float64, packetLen int) float64 {
 }
 
 func (p *kissStatsProvider) Stats(ctx context.Context) DeviceStats {
-	// Must run before the queries below: the waiter takes any non-TX_BUSY HW_RESP_ERROR, so a battery query's HW_ERR_NO_CALLBACK would fail this one.
+	// Each query returns before the reply handlers run, so its answer is recorded here; the deadline keeps a lost reply from stalling the poll.
+	ctx, cancel := context.WithTimeout(ctx, kissQueryTimeout)
+	defer cancel()
+	record := func(set func()) {
+		p.lastReply.Store(time.Now().UnixNano())
+		p.mu.Lock()
+		set()
+		p.mu.Unlock()
+	}
 	if fw, err := p.modem.FirmwareCounters(ctx); err != nil {
 		p.log.Debug("firmware counters unavailable", "error", err)
 	} else {
-		p.mu.Lock()
-		p.fwCounters = &fw
-		p.mu.Unlock()
+		record(func() { p.fwCounters = &fw })
 	}
-	if err := p.modem.GetNoiseFloor(); err != nil {
-		p.log.Error("get noise floor", "error", err)
+	if nf, err := p.modem.NoiseFloor(ctx); err != nil {
+		p.log.Debug("noise floor unavailable", "error", err)
+	} else {
+		record(func() { p.noiseFloor = nf })
 	}
-	if err := p.modem.GetBattery(); err != nil {
-		p.log.Error("get battery", "error", err)
+	if mv, err := p.modem.Battery(ctx); err != nil {
+		p.log.Debug("battery unavailable", "error", err)
+	} else {
+		record(func() { p.batteryMV, p.haveBattery = mv, true })
 	}
-	if err := p.modem.GetMCUTemp(); err != nil {
-		p.log.Error("get mcu temp", "error", err)
-	}
-
-	// Give the modem a moment to respond.
-	select {
-	case <-ctx.Done():
-	case <-time.After(500 * time.Millisecond):
+	if c, err := p.modem.MCUTemp(ctx); err != nil {
+		p.log.Debug("mcu temperature unavailable", "error", err)
+	} else {
+		record(func() { p.mcuTempC, p.haveMCUTemp = math.Round(float64(c)*10)/10, true })
 	}
 
 	ds := p.snapshot()

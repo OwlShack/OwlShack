@@ -8,8 +8,8 @@ import (
 
 	"github.com/OwlShack/OwlShack/internal/api"
 	"github.com/OwlShack/OwlShack/internal/store"
-	meshcore "github.com/meshcore-go/meshcore-go"
-	"github.com/meshcore-go/meshcore-go/node"
+	meshcore "github.com/OwlShack/meshcore-go"
+	"github.com/OwlShack/meshcore-go/node"
 )
 
 // TX is hooked on the modem, not a virtual radio: a virtual radio fires outbound handlers only for its own sends.

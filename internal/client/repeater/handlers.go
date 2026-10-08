@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
-	"github.com/meshcore-go/meshcore-go/node"
+	meshcore "github.com/OwlShack/meshcore-go"
+	"github.com/OwlShack/meshcore-go/node"
 
 	"github.com/OwlShack/OwlShack/internal/meshpath"
 )
@@ -42,7 +42,7 @@ func (rm *Client) HandlePathPacket(pkt *meshcore.Packet) bool {
 			rm.log.Debug("HandlePathPacket: bad path payload", "error", err)
 			continue
 		}
-		if pp.ExtraType != meshcore.PayloadTypeResponse || !isLoginReply(pp.Extra) {
+		if pp.ExtraType != meshcore.PayloadTypeResponse || !rm.isLoginReply(pp.Extra, pl.peerPubKeyByte) {
 			continue
 		}
 		rm.pendingLogins = append(rm.pendingLogins[:i], rm.pendingLogins[i+1:]...)
@@ -179,7 +179,7 @@ func (rm *Client) HandleResponsePacket(pkt *meshcore.Packet) {
 			continue
 		}
 		plaintext := resp.Decrypt(pl.sharedSecret)
-		if !isLoginReply(plaintext) {
+		if !rm.isLoginReply(plaintext, pl.peerPubKeyByte) {
 			continue
 		}
 		rm.pendingLogins = append(rm.pendingLogins[:i], rm.pendingLogins[i+1:]...)
@@ -304,7 +304,7 @@ func (rm *Client) HandleTextPacket(pkt *meshcore.Packet) bool {
 		}
 
 		flags := plaintext[4] >> 2
-		if flags != txtTypeCliData {
+		if flags != meshcore.TxtTypeCLIData {
 			continue
 		}
 
@@ -322,7 +322,8 @@ const reciprocalPathDelay = 500 * time.Millisecond
 // that fresh route. Firmware Mesh.cpp:173-178 does this for any flood PATH; without it the remote
 // keeps flooding every response at us.
 func (rm *Client) sendReciprocalPath(pkt *meshcore.Packet, peerPubKey, secret, learnedPath []byte, hashSize uint8) {
-	if !pkt.IsRouteFlood() {
+	// A marked PATH came from a peer the node knows, and the library has already answered it.
+	if !pkt.IsRouteFlood() || pkt.IsMarkedDoNotRetransmit() {
 		return
 	}
 	rpath, err := meshpath.BuildReturn(rm.node.Identity().PublicKey(), peerPubKey, secret, pkt.Path, pkt.PathLength, 0, nil)

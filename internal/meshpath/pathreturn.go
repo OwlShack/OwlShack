@@ -6,7 +6,7 @@ import (
 	"crypto/rand"
 	"fmt"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
+	meshcore "github.com/OwlShack/meshcore-go"
 )
 
 // BuildReturn matches the firmware's createPathReturn:
@@ -47,7 +47,7 @@ func BuildReturn(selfPubKey [meshcore.PubKeySize]byte, destPubKey, sharedSecret,
 
 	return &meshcore.Packet{
 		Header:     meshcore.MakeHeader(meshcore.RouteTypeFlood, meshcore.PayloadTypePath, 0),
-		PathLength: (meshcore.PathHashSize - 1) << 6,
+		PathLength: meshcore.MakePathLen(meshcore.PathHashSize, 0),
 		Payload:    payload,
 	}, nil
 }
@@ -59,5 +59,5 @@ func Direct(pkt *meshcore.Packet, path []byte, hashSize uint8) {
 	}
 	pkt.Header = meshcore.MakeHeader(meshcore.RouteTypeDirect, meshcore.PayloadTypePath, 0)
 	pkt.Path = path
-	pkt.PathLength = (hashSize-1)<<6 | byte(len(path)/int(hashSize))
+	pkt.PathLength = meshcore.MakePathLen(hashSize, uint8(len(path)/int(hashSize)))
 }

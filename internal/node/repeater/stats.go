@@ -6,7 +6,7 @@ import (
 	"sort"
 	"time"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
+	meshcore "github.com/OwlShack/meshcore-go"
 )
 
 // Stats is a live snapshot of the repeater's relay activity, for the API.

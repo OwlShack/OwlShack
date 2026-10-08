@@ -8,14 +8,14 @@ import (
 	"strings"
 	"time"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
+	meshcore "github.com/OwlShack/meshcore-go"
 
 	"github.com/OwlShack/OwlShack/internal/telemetry"
 )
 
 func (rm *Client) SendStatusReq(pubkeyHex string, timeout time.Duration) (*Status, error) {
 	body := make([]byte, 5)
-	body[0] = reqTypeGetStatus
+	body[0] = meshcore.ReqTypeGetStatus
 	data, err := rm.sendBinaryRequest(pubkeyHex, body, timeout, "status")
 	if err != nil {
 		return nil, err
@@ -50,7 +50,7 @@ func (rm *Client) SendRoomKeepAlive(pubkeyHex string, since uint32) error {
 	// [tag:4][0x02][since:4] — exactly the 9 bytes the room hashes for its ACK.
 	plaintext := make([]byte, 9)
 	binary.LittleEndian.PutUint32(plaintext[:4], rm.UniqueTimestamp())
-	plaintext[4] = reqTypeKeepAlive
+	plaintext[4] = meshcore.ReqTypeKeepAlive
 	binary.LittleEndian.PutUint32(plaintext[5:9], since)
 
 	encrypted, err := meshcore.EncryptThenMAC(sess.sharedSecret, plaintext)
@@ -76,7 +76,7 @@ func (rm *Client) SendRoomKeepAlive(pubkeyHex string, since uint32) error {
 // SendRoomStatusReq is SendStatusReq for a room server, whose ServerStats trailer differs.
 func (rm *Client) SendRoomStatusReq(pubkeyHex string, timeout time.Duration) (*Status, error) {
 	body := make([]byte, 5)
-	body[0] = reqTypeGetStatus
+	body[0] = meshcore.ReqTypeGetStatus
 	data, err := rm.sendBinaryRequest(pubkeyHex, body, timeout, "room status")
 	if err != nil {
 		return nil, err
@@ -87,7 +87,7 @@ func (rm *Client) SendRoomStatusReq(pubkeyHex string, timeout time.Duration) (*S
 func (rm *Client) SendNeighborsReq(pubkeyHex string, count uint8, offset uint16, timeout time.Duration) (*Neighbors, error) {
 	// payload: type(1) request_version(1) count(1) offset(2) order_by(1) prefix_len(1) random(4)
 	body := make([]byte, 11)
-	body[0] = reqTypeGetNeighbors
+	body[0] = meshcore.ReqTypeGetNeighbours
 	body[1] = 0 // request version
 	body[2] = count
 	binary.LittleEndian.PutUint16(body[3:5], offset)
@@ -105,7 +105,7 @@ func (rm *Client) SendNeighborsReq(pubkeyHex string, count uint8, offset uint16,
 
 func (rm *Client) SendOwnerInfoReq(pubkeyHex string, timeout time.Duration) (*OwnerInfo, error) {
 	body := make([]byte, 5)
-	body[0] = reqTypeGetOwnerInfo
+	body[0] = meshcore.ReqTypeGetOwnerInfo
 	data, err := rm.sendBinaryRequest(pubkeyHex, body, timeout, "owner")
 	if err != nil {
 		return nil, err
@@ -116,7 +116,7 @@ func (rm *Client) SendOwnerInfoReq(pubkeyHex string, timeout time.Duration) (*Ow
 func (rm *Client) SendAccessListReq(pubkeyHex string, timeout time.Duration) (*AccessList, error) {
 	// payload: type(1) reserved(2) reserved(2) random(4)
 	body := make([]byte, 9)
-	body[0] = reqTypeGetAccessList
+	body[0] = meshcore.ReqTypeGetAccessList
 	if _, err := rand.Read(body[5:9]); err != nil {
 		return nil, fmt.Errorf("generating random: %w", err)
 	}
@@ -146,7 +146,7 @@ func (rm *Client) SetAccessPerm(pubkeyHex, targetPubkeyHex string, perms uint8, 
 func (rm *Client) SendSeriesReq(pubkeyHex string, startSecsAgo, endSecsAgo uint32, timeout time.Duration) (*telemetry.Series, error) {
 	// payload: type(1) start(4) end(4) reserved(2)
 	body := make([]byte, 11)
-	body[0] = reqTypeGetAvgMinMax
+	body[0] = meshcore.ReqTypeGetAvgMinMax
 	binary.LittleEndian.PutUint32(body[1:5], startSecsAgo)
 	binary.LittleEndian.PutUint32(body[5:9], endSecsAgo)
 	data, err := rm.sendBinaryRequest(pubkeyHex, body, timeout, "series")
@@ -159,7 +159,7 @@ func (rm *Client) SendSeriesReq(pubkeyHex string, startSecsAgo, endSecsAgo uint3
 // telemetryReqBody: type(1) mask(1) reserved(3) random(4); mask 0x00 asks for all and the firmware filters by ACL.
 func telemetryReqBody() ([]byte, error) {
 	body := make([]byte, 9)
-	body[0] = reqTypeGetTelemetryData
+	body[0] = meshcore.ReqTypeGetTelemetryData
 	if _, err := rand.Read(body[5:9]); err != nil {
 		return nil, fmt.Errorf("generating random: %w", err)
 	}
@@ -262,7 +262,7 @@ func (rm *Client) SendCLI(pubkeyHex, command string, timeout time.Duration) (str
 		rm.cliMu.Unlock()
 	}()
 
-	plaintext := meshcore.BuildTextPlaintext(time.Unix(int64(rm.UniqueTimestamp()), 0), txtTypeCliData<<2, []byte(framedCommand))
+	plaintext := meshcore.BuildTextPlaintext(time.Unix(int64(rm.UniqueTimestamp()), 0), meshcore.TxtTypeCLIData<<2, []byte(framedCommand))
 
 	encrypted, err := meshcore.EncryptThenMAC(sess.sharedSecret, plaintext)
 	if err != nil {

@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
-	"github.com/meshcore-go/meshcore-go/node"
+	meshcore "github.com/OwlShack/meshcore-go"
+	"github.com/OwlShack/meshcore-go/node"
 
 	"github.com/OwlShack/OwlShack/internal/store"
 )
@@ -34,7 +34,7 @@ func TestExpandedKey_RequestsDecryptAtTheRepeater(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if self.Seed() != [32]byte{} {
+	if _, ok := self.Seed(); ok {
 		t.Fatal("precondition: an expanded-key identity should have no seed")
 	}
 	repeater := meshcore.NewLocalIdentityFromSeed([32]byte{0x8d})

@@ -9,22 +9,21 @@ import (
 	"strings"
 	"time"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
-	"github.com/meshcore-go/meshcore-go/node"
+	meshcore "github.com/OwlShack/meshcore-go"
+	"github.com/OwlShack/meshcore-go/node"
 
-	"github.com/OwlShack/OwlShack/internal/config"
 	"github.com/OwlShack/OwlShack/internal/store"
 )
 
 // Admin-over-mesh: the server side of internal/client/repeater, wire formats mirroring firmware MyMesh.cpp handleLoginReq / handleRequest.
 
-// Permission levels (firmware PERM_ACL_* — lower 2 bits are the role).
+// Permission levels as the ACL stores them (int); the role is the low 2 bits.
 const (
-	permGuest     = 0x00
-	permReadOnly  = 0x01
-	permReadWrite = 0x02
-	permAdmin     = 0x03
-	permRoleMask  = 0x03
+	permGuest     = int(meshcore.PermACLGuest)
+	permReadOnly  = int(meshcore.PermACLReadOnly)
+	permReadWrite = int(meshcore.PermACLReadWrite)
+	permAdmin     = int(meshcore.PermACLAdmin)
+	permRoleMask  = int(meshcore.PermACLRoleMask)
 )
 
 const (
@@ -94,11 +93,7 @@ func (r *Repeater) handleAnonReq(pkt *meshcore.Packet) {
 }
 
 // Anon sub-request types (firmware ANON_REQ_TYPE_*): unauthenticated, direct-routed only, answered ahead of any login.
-const (
-	anonReqTypeRegions = 0x01
-	anonReqTypeOwner   = 0x02
-	anonReqTypeBasic   = 0x03 // our clock + disabled flag
-)
+const ()
 
 // handleAnonSubReq replies [sender_ts:4][now:4][body] along the caller-supplied return path (request body [pathLenByte][path]).
 func (r *Repeater) handleAnonSubReq(pkt *meshcore.Packet, clientPub [32]byte, secret []byte, ts uint32, subType byte, params []byte) {
@@ -123,11 +118,11 @@ func (r *Repeater) handleAnonSubReq(pkt *meshcore.Packet, clientPub [32]byte, se
 	binary.LittleEndian.PutUint32(body[:4], ts)                        // reflected tag
 	binary.LittleEndian.PutUint32(body[4:], uint32(time.Now().Unix())) // our clock
 	switch subType {
-	case anonReqTypeRegions:
+	case meshcore.AnonReqTypeRegions:
 		body = append(body, r.regionsExport()...)
-	case anonReqTypeOwner:
+	case meshcore.AnonReqTypeOwner:
 		body = append(body, cfg.Name+"\n"+cfg.OwnerInfo...)
-	case anonReqTypeBasic:
+	case meshcore.AnonReqTypeBasic:
 		var feat byte
 		if cfg.IsFwdDisabled() {
 			feat |= 0x80 // "is disabled" bit; we have no bridge bits to set
@@ -448,18 +443,8 @@ func (r *Repeater) sendServerReply(reqPkt *meshcore.Packet, clientPub [32]byte, 
 
 // sendFloodScoped ports MyMesh::sendFloodReply + chooseReplyScope: reuse the request's scope, else the default, else unscoped.
 func (r *Repeater) sendFloodScoped(out, reqPkt *meshcore.Packet, priority uint8, delay time.Duration) error {
-	var scope *meshcore.Region
-	switch rg := r.node.Regions().FindFloodMatch(reqPkt); {
-	case !reqPkt.IsRouteFlood() || rg == nil:
-		scope = r.defaultRegionScope()
-	case rg.Name != config.WildcardRegion: // Wildcard() hands out copies, so compare by name
-		scope = rg
-	}
-	out.PathLength = (reqPkt.PathHashSize() - 1) << 6
-	if scope != nil {
-		out.Header = meshcore.MakeHeader(meshcore.RouteTypeTransportFlood, out.PayloadType(), 0)
-		out.TransportCode1 = scope.CalcTransportCode(out)
-	}
+	out.PathLength = meshcore.MakePathLen(reqPkt.PathHashSize(), 0)
+	out.SetScope(r.node.Regions().ReplyScope(reqPkt))
 	return r.sendPkt(out, priority, delay)
 }
 
@@ -491,7 +476,7 @@ func (r *Repeater) replyRoute(clientPub [32]byte) (routeType byte, pathLen uint8
 	if hashSize == 0 {
 		hashSize = int(meshcore.PathHashSize)
 	}
-	return meshcore.RouteTypeDirect, uint8(hashSize-1)<<6 | uint8(len(route.path)/hashSize), route.path
+	return meshcore.RouteTypeDirect, meshcore.MakePathLen(uint8(hashSize), uint8(len(route.path)/hashSize)), route.path
 }
 
 // encPacket splits the 2-byte MAC prefix off the ciphertext and hands both to build.

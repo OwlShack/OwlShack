@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
+	meshcore "github.com/OwlShack/meshcore-go"
 
 	"github.com/OwlShack/OwlShack/internal/config"
 	"github.com/OwlShack/OwlShack/internal/logging"

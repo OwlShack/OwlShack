@@ -9,7 +9,7 @@ import (
 
 	"github.com/OwlShack/OwlShack/internal/buildinfo"
 	"github.com/OwlShack/OwlShack/internal/modem"
-	meshcore "github.com/meshcore-go/meshcore-go"
+	meshcore "github.com/OwlShack/meshcore-go"
 )
 
 // Zone-aware so downstream observers don't read our feed as naive local time and clamp rxTime to their ingest time; always format a UTC time with it.

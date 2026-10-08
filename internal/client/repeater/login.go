@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
+	meshcore "github.com/OwlShack/meshcore-go"
 )
 
 type LoginResult struct {
@@ -116,22 +116,19 @@ func (rm *Client) sendLogin(pubkeyHex, password string, roomSyncSince *uint32, t
 
 	select {
 	case data := <-resultCh:
-		isAdmin := len(data) > 6 && data[6] == 1
-		perms := 0
-		if len(data) > 7 {
-			perms = int(data[7])
-		}
+		reply, _ := meshcore.ParseLoginReply(data[4:]) // isLoginReply already parsed it
+		isAdmin := reply.Admin == 1
+		perms := int(reply.Permissions)
 		role := ""
 		if roomSyncSince != nil {
-			// Room login response byte 6: 1=admin, 2=read-only (guest), 0=read-write
-			role = "read-write"
-			if len(data) > 6 {
-				switch data[6] {
-				case 1:
-					role = "admin"
-				case 2:
-					role = "read-only"
-				}
+			// Room login reply admin byte: 1=admin, 2=read-only (guest), 0=read-write
+			switch reply.Admin {
+			case 1:
+				role = "admin"
+			case 2:
+				role = "read-only"
+			default:
+				role = "read-write"
 			}
 		}
 		rm.mu.Lock()

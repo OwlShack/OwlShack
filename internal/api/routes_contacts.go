@@ -15,7 +15,7 @@ import (
 	"time"
 	"unicode"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
+	meshcore "github.com/OwlShack/meshcore-go"
 
 	"github.com/OwlShack/OwlShack/internal/store"
 )

@@ -8,13 +8,9 @@ import (
 	"time"
 
 	"github.com/OwlShack/OwlShack/internal/config"
-	"github.com/meshcore-go/meshcore-go/hardware"
-	"github.com/meshcore-go/meshcore-go/hardware/openhop"
-	"github.com/meshcore-go/meshcore-go/hardware/sx12xx"
+	"github.com/OwlShack/meshcore-go/hardware"
+	"github.com/OwlShack/meshcore-go/hardware/openhop"
 )
-
-// MeshCore's private sync word. The firmware's own default, and the only value that hears the mesh.
-const openhopSyncWord = 0x12
 
 // setupOpenhop drives openHop Modem firmware, which speaks its own protocol rather than KISS: it
 // owns the radio and does CAD itself, so this process only frames packets.
@@ -40,8 +36,8 @@ func setupOpenhop(ctx context.Context, ms *State, cfg *config.Config, connAddr s
 		SF:          radioConfig.SF,
 		CR:          radioConfig.CR,
 		TxPower:     int8(*cfg.TX),
-		SyncWord:    openhopSyncWord,
-		PreambleLen: uint8(sx12xx.PreambleForSF(radioConfig.SF)),
+		SyncWord:    openhop.MeshCoreSyncWord,
+		PreambleLen: uint8(hardware.PreambleForSF(radioConfig.SF)),
 	}
 
 	m := openhop.New(dial,

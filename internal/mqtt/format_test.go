@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/OwlShack/OwlShack/internal/modem"
-	meshcore "github.com/meshcore-go/meshcore-go"
+	meshcore "github.com/OwlShack/meshcore-go"
 )
 
 // Busy and queue drops mean opposite things to an operator, so a cross-wired mapping inverts the diagnosis silently.

@@ -9,8 +9,8 @@ import (
 	"slices"
 	"strings"
 
-	meshcore "github.com/meshcore-go/meshcore-go"
-	"github.com/meshcore-go/meshcore-go/hardware/openhop"
+	meshcore "github.com/OwlShack/meshcore-go"
+	"github.com/OwlShack/meshcore-go/hardware/openhop"
 	"github.com/pelletier/go-toml/v2"
 	"gopkg.in/yaml.v3"
 )
