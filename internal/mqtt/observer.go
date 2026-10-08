@@ -224,7 +224,7 @@ func (o *Observer) brokerHealthLocked(name string) *brokerHealth {
 	return h
 }
 
-// BrokerStatuses reports every configured broker, connected or not; liveness is paho's IsConnectionOpen, as IsConnected stays true while reconnecting.
+// BrokerStatuses reports every enabled broker, connected or not; liveness is paho's IsConnectionOpen, as IsConnected stays true while reconnecting.
 func (o *Observer) BrokerStatuses() []BrokerStatus {
 	live := make(map[string]*brokerClient)
 	for _, bc := range o.brokerList() {
@@ -232,6 +232,9 @@ func (o *Observer) BrokerStatuses() []BrokerStatus {
 	}
 	out := make([]BrokerStatus, 0, len(o.cfg.Brokers))
 	for _, bcfg := range o.cfg.Brokers {
+		if !bcfg.Enabled {
+			continue
+		}
 		st := BrokerStatus{
 			Name:      bcfg.Name,
 			Host:      bcfg.Host,
@@ -471,6 +474,9 @@ func (o *Observer) NoteTx(data []byte) {
 	}
 	o.publishPacket(pkt, data, "tx")
 }
+
+// Relaying is the `repeat` flag the next status carries.
+func (o *Observer) Relaying() bool { return o.relaying.Load() }
 
 // SetRelaying records the `repeat` flag and publishes a status on change, so consumers don't wait up to StatusIntervalSeconds for it.
 func (o *Observer) SetRelaying(v bool) {

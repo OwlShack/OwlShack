@@ -585,7 +585,9 @@ type FloodRegionsInput struct {
 }
 
 type MqttInput struct {
-	Enabled         *bool   `json:"enabled"`
+	Enabled *bool `json:"enabled"`
+	// NodeKind is required: "companion" (NodeCompanionID) or "repeater" (no id).
+	NodeKind        string  `json:"nodeKind"`
 	NodeCompanionID *int64  `json:"nodeCompanionId"`
 	IataCode        *string `json:"iataCode"`
 	StatusInterval  *int    `json:"statusInterval"`

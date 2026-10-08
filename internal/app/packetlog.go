@@ -9,6 +9,7 @@ import (
 
 	"github.com/OwlShack/OwlShack/internal/api"
 	"github.com/OwlShack/OwlShack/internal/config"
+	"github.com/OwlShack/OwlShack/internal/mqtt"
 	"github.com/OwlShack/OwlShack/internal/store"
 	meshcore "github.com/OwlShack/meshcore-go"
 	"github.com/OwlShack/meshcore-go/node"
@@ -32,7 +33,7 @@ func floodScopeOf(pkt *meshcore.Packet) string {
 }
 
 // TX is hooked on the modem, not a virtual radio: a virtual radio fires outbound handlers only for its own sends.
-func wirePacketLogger(mux *node.RadioMux, modem node.Modem, db *store.Store, srv *api.Server, compReg *companionRegistry) {
+func wirePacketLogger(mux *node.RadioMux, modem node.Modem, db *store.Store, srv *api.Server, mqttObs *atomic.Pointer[mqtt.Observer]) {
 	hub := srv.Hub()
 	logRadio := mux.NewRadio()
 
@@ -100,13 +101,9 @@ func wirePacketLogger(mux *node.RadioMux, modem node.Modem, db *store.Store, srv
 
 		hub.Broadcast("packets", packetBroadcastMsg("tx", rec.ReceivedAt, data, pkt, err, srv.ChannelLookup()))
 
-		// Resolved through the registry because a reload builds new observers while this handler can never be removed.
-		if compReg != nil {
-			for _, c := range compReg.all() {
-				if obs := c.Observer(); obs != nil {
-					obs.NoteTx(data)
-				}
-			}
+		// Read on each packet because a reload builds a new observer while this handler can never be removed.
+		if obs := mqttObs.Load(); obs != nil {
+			obs.NoteTx(data)
 		}
 	})
 }

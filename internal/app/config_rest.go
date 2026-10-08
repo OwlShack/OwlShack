@@ -18,11 +18,15 @@ import (
 // configMutate is the shared write transaction, serialized on the store's writer goroutine.
 func (b *backend) configMutate(ctx context.Context, apply func(*configRows) error, persist func(*store.Store) error) error {
 	return writeConfigTx(ctx, b.db, b.reload, func(rows *configRows) error {
+		wasNodeless := mqttNodeless(rows)
 		if err := apply(rows); err != nil {
 			return err
 		}
 		if verr := assembleFromRows(rows).Validate(); verr != nil {
 			return verr
+		}
+		if !wasNodeless && mqttNodeless(rows) {
+			return api.Invalid(errors.New("MQTT would publish with no node to speak as; pick its node on the MQTT page first"))
 		}
 		return persist(b.db)
 	})
@@ -222,8 +226,15 @@ func (b *backend) SetContactFloodScope(ctx context.Context, companionID int64, p
 }
 
 func (b *backend) SaveMqtt(ctx context.Context, in api.MqttInput) error {
+	if in.NodeKind != config.MqttNodeCompanion && in.NodeKind != config.MqttNodeRepeater {
+		return api.Invalid(fmt.Errorf(`nodeKind is required: %q or %q`, config.MqttNodeCompanion, config.MqttNodeRepeater))
+	}
+	if in.NodeKind == config.MqttNodeRepeater && in.NodeCompanionID != nil {
+		return api.Invalid(errors.New("nodeCompanionId names a companion; leave it out when the repeater feeds MQTT"))
+	}
 	row := store.MqttSettings{
 		Enabled:         in.Enabled,
+		NodeKind:        in.NodeKind,
 		NodeCompanionID: in.NodeCompanionID,
 		IataCode:        in.IataCode,
 		StatusInterval:  in.StatusInterval,
@@ -231,9 +242,46 @@ func (b *backend) SaveMqtt(ctx context.Context, in api.MqttInput) error {
 		Email:           in.Email,
 	}
 	return b.configMutate(ctx,
-		func(rows *configRows) error { rows.mqtt = &row; return nil },
+		func(rows *configRows) error {
+			if in.NodeKind == config.MqttNodeRepeater && rows.repeater == nil {
+				return api.Invalid(errors.New("no repeater is configured to feed MQTT"))
+			}
+			if id := in.NodeCompanionID; id != nil && !slices.ContainsFunc(rows.companions, func(c store.Companion) bool { return c.ID == *id }) {
+				return api.Invalid(fmt.Errorf("no companion with id %d to feed MQTT", *id))
+			}
+			if in.NodeKind == config.MqttNodeCompanion && in.NodeCompanionID == nil && len(rows.companions) > 0 {
+				return api.Invalid(errors.New("nodeCompanionId is required: pick the companion that feeds MQTT"))
+			}
+			rows.mqtt = &row
+			if in.NodeKind == config.MqttNodeCompanion && len(rows.companions) == 0 && mqttFeeding(rows) {
+				return api.Invalid(errors.New("there is no companion to feed MQTT; pick the repeater or add a companion"))
+			}
+			return nil
+		},
 		func(st *store.Store) error { return st.Mqtt.Set(ctx, &row) },
 	)
+}
+
+// mqttFeeding is whether MQTT is on, so its node is in use: enabled, with an enabled broker to publish to.
+func mqttFeeding(rows *configRows) bool {
+	return (rows.mqtt.Enabled == nil || *rows.mqtt.Enabled) && slices.ContainsFunc(rows.brokers, func(b store.Broker) bool { return b.Enabled })
+}
+
+// mqttNodeless is MQTT publishing while the node it speaks as is missing, so it would send nothing while looking on.
+func mqttNodeless(rows *configRows) bool {
+	if !mqttFeeding(rows) {
+		return false
+	}
+	if rows.mqtt.NodeKind == config.MqttNodeRepeater {
+		return rows.repeater == nil
+	}
+	id := rows.mqtt.NodeCompanionID
+	return id == nil || !slices.ContainsFunc(rows.companions, func(c store.Companion) bool { return c.ID == *id })
+}
+
+// errFeedsMqtt refuses deleting the node MQTT speaks as, so the feed never changes identity unasked.
+func errFeedsMqtt(what string) error {
+	return api.Failed(http.StatusConflict, fmt.Errorf("%s feeds MQTT; pick another node on the MQTT page, or turn MQTT off, first", what))
 }
 
 func (b *backend) SaveBroker(ctx context.Context, in api.BrokerInput) (int64, error) {
@@ -408,12 +456,15 @@ func (b *backend) SetCompanionTelemetry(ctx context.Context, id int64, in api.Co
 func (b *backend) DeleteCompanion(ctx context.Context, id int64) error {
 	return b.configMutate(ctx,
 		func(rows *configRows) error {
+			if rows.mqtt.NodeKind != config.MqttNodeRepeater && rows.mqtt.NodeCompanionID != nil && *rows.mqtt.NodeCompanionID == id {
+				if mqttFeeding(rows) {
+					return errFeedsMqtt("this companion")
+				}
+				rows.mqtt.NodeCompanionID = nil
+			}
 			rows.companions = filterOut(rows.companions, func(c store.Companion) bool { return c.ID == id })
 			rows.channels = filterOut(rows.channels, func(c store.CompanionChannel) bool { return c.CompanionID == id })
 			rows.triggers = filterOut(rows.triggers, func(t store.Trigger) bool { return t.CompanionID == id })
-			if rows.mqtt.NodeCompanionID != nil && *rows.mqtt.NodeCompanionID == id {
-				rows.mqtt.NodeCompanionID = nil
-			}
 			return nil
 		},
 		func(st *store.Store) error { return st.Companions.Delete(ctx, id) }, // cascade clears children
@@ -767,9 +818,26 @@ func (b *backend) RemoveRepeaterRegion(ctx context.Context, name string) error {
 }
 
 func (b *backend) DeleteRepeater(ctx context.Context) error {
+	var mqtt *store.MqttSettings
 	return b.configMutate(ctx,
-		func(rows *configRows) error { rows.repeater = nil; return nil },
+		func(rows *configRows) error {
+			if rows.mqtt.NodeKind == config.MqttNodeRepeater {
+				if mqttFeeding(rows) {
+					return errFeedsMqtt("the repeater")
+				}
+				m := *rows.mqtt
+				m.NodeKind = config.MqttNodeCompanion
+				rows.mqtt, mqtt = &m, &m
+			}
+			rows.repeater = nil
+			return nil
+		},
 		func(st *store.Store) error {
+			if mqtt != nil {
+				if err := st.Mqtt.Set(ctx, mqtt); err != nil {
+					return err
+				}
+			}
 			if err := st.RepeaterACL.Clear(ctx); err != nil { // drop admin-over-mesh clients
 				return err
 			}

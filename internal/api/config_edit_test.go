@@ -29,6 +29,7 @@ func (b *editBackend) SetRepeaterRegionFlood(context.Context, string, bool) erro
 	b.flood++
 	return b.editErr
 }
+func (b *editBackend) DeleteRepeater(context.Context) error { return b.editErr }
 
 func serve(b Backend, method, url, body string) int {
 	s := &Server{mux: http.NewServeMux(), log: slog.New(slog.DiscardHandler)}
@@ -87,5 +88,14 @@ func TestRepeaterRegionPatch_OneChangeAtATime(t *testing.T) {
 	b := &editBackend{editErr: Failed(http.StatusNotFound, errors.New("unknown region"))}
 	if got := serve(b, http.MethodPatch, "/api/config/repeater/regions/nope", `{"parent":"*"}`); got != http.StatusNotFound {
 		t.Errorf("moving an unknown region: %d, want 404", got)
+	}
+}
+
+// A refused repeater delete keeps its status, so "it feeds MQTT" reads as a conflict, not bad input.
+func TestDeleteRepeater_KeepsTheRefusalStatus(t *testing.T) {
+	t.Parallel()
+	b := &editBackend{editErr: Failed(http.StatusConflict, errors.New("the repeater feeds MQTT"))}
+	if got := serve(b, http.MethodDelete, "/api/config/repeater", ""); got != http.StatusConflict {
+		t.Errorf("DELETE /api/config/repeater = %d, want 409", got)
 	}
 }

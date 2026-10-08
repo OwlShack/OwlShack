@@ -31,8 +31,12 @@ import {
   type Broker,
   type BrokerInput,
   type ConfigCompanion,
+  type ConfigRepeater,
   type MqttSettings,
 } from "@/lib/configApi";
+
+// The Node picker's value for the repeater; a companion is its id.
+const REPEATER_NODE = "repeater";
 
 // GET /api/mqtt/status, keyed by broker name — the observer never sees the config surrogate id.
 interface BrokerStatus {
@@ -150,10 +154,16 @@ export function MqttPage() {
     error: brokersError,
     reload: reloadBrokers,
   } = useApiList<Broker>("/api/config/mqtt/brokers", "Failed to load brokers");
-  const { items: companions } = useApiList<ConfigCompanion>(
-    "/api/config/companions",
-    "Failed to load companions",
-  );
+  const {
+    items: companions,
+    error: companionsError,
+    reload: reloadCompanions,
+  } = useApiList<ConfigCompanion>("/api/config/companions", "Failed to load companions");
+  const {
+    item: repeater,
+    error: repeaterError,
+    reload: reloadRepeater,
+  } = useApiObject<ConfigRepeater>("/api/config/repeater", "Failed to load the repeater");
 
   const [savingFeed, setSavingFeed] = useState(false);
   const [enabled, setEnabled] = useState(true);
@@ -168,23 +178,23 @@ export function MqttPage() {
   useEffect(() => {
     if (!mqtt) return;
     setEnabled(mqtt.enabled !== false);
-    setNodeId(mqtt.nodeCompanionId != null ? String(mqtt.nodeCompanionId) : "");
+    setNodeId(mqtt.nodeKind === "repeater" ? REPEATER_NODE : mqtt.nodeCompanionId != null ? String(mqtt.nodeCompanionId) : "");
     setIataCode(mqtt.iataCode ?? "");
     setOwner(mqtt.owner ?? "");
     setEmail(mqtt.email ?? "");
     setStatusInterval(String(mqtt.statusInterval ?? 300));
   }, [mqtt]);
 
-  // Default the feed node to the first companion when none is stored yet.
+  // Default the feed node to the first companion, or the repeater when there is none, when nothing is stored yet.
   useEffect(() => {
-    if (nodeId === "" && companions && companions.length > 0) {
-      setNodeId(String(companions[0].id));
-    }
-  }, [companions, nodeId]);
+    if (nodeId !== "" || !companions) return;
+    const first = companions.length > 0 ? String(companions[0].id) : repeater?.configured ? REPEATER_NODE : "";
+    if (first !== "") setNodeId((cur) => (cur === "" ? first : cur));
+  }, [companions, repeater, nodeId]);
 
   const list = brokers ?? [];
   const loading = mqttLoading || brokersLoading;
-  const error = mqttError || brokersError;
+  const error = mqttError || brokersError || companionsError || repeaterError;
 
   // Connection state is runtime, not config, so it polls rather than riding the config reload.
   const [status, setStatus] = useState<MqttStatus | null>(null);
@@ -220,7 +230,8 @@ export function MqttPage() {
     try {
       await configApi.putMqtt({
         enabled,
-        nodeCompanionId: nodeId === "" ? null : parseInt(nodeId, 10),
+        nodeKind: nodeId === REPEATER_NODE ? "repeater" : "companion",
+        nodeCompanionId: nodeId === "" || nodeId === REPEATER_NODE ? null : parseInt(nodeId, 10),
         iataCode: iataCode || null,
         owner: owner || null,
         email: email || null,
@@ -268,7 +279,7 @@ export function MqttPage() {
           )
         }
         actions={
-          <HeaderButton tone="primary" icon={Save} busy={savingFeed} onClick={saveFeed} disabled={savingFeed || loading || !mqtt}>
+          <HeaderButton tone="primary" icon={Save} busy={savingFeed} onClick={saveFeed} disabled={savingFeed || loading || !mqtt || !companions || !repeater}>
             {savingFeed ? "saving" : "save"}
           </HeaderButton>
         }
@@ -278,8 +289,10 @@ export function MqttPage() {
         <LoadErrorAlert
           message={error}
           onRetry={() => {
-            reloadMqtt();
-            reloadBrokers();
+            if (mqttError) reloadMqtt();
+            if (brokersError) reloadBrokers();
+            if (companionsError) reloadCompanions();
+            if (repeaterError) reloadRepeater();
           }}
         />
       )}
@@ -301,12 +314,14 @@ export function MqttPage() {
                 <SelectField
                   label="Node"
                   value={nodeId}
-                  options={(companions ?? []).map((c) => ({
-                    value: String(c.id),
-                    label: c.name,
-                  }))}
+                  options={[
+                    ...(companions ?? []).map((c) => ({ value: String(c.id), label: c.name })),
+                    ...(repeater?.configured || nodeId === REPEATER_NODE
+                      ? [{ value: REPEATER_NODE, label: repeater?.name ? `${repeater.name} (repeater)` : "repeater" }]
+                      : []),
+                  ]}
                   onChange={setNodeId}
-                  hint="one node feeds MQTT — its identity signs the feed"
+                  hint="one node feeds MQTT; brokers see its name and key"
                 />
                 <TextField
                   label="IATA code"

@@ -428,6 +428,7 @@ func brokerError(o *Observer) string {
 }
 
 func registered(o *Observer, bc *brokerClient) {
+	bc.cfg.Enabled = true
 	o.cfg.Brokers = []config.BrokerConfig{bc.cfg}
 	o.brokers = []*brokerClient{bc}
 }

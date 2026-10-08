@@ -261,15 +261,28 @@ radio/connection change still restarts everything (modem reconnect);
   response to a session we opened, so it is never gated. Changing either field
   restarts the companion, since `triggersOnlyChange` only spares a trigger-only
   edit — so the RX path reads them without a lock.
-- **MQTT is top-level, one node.** `Config.Mqtt` (`mqtt.node` selects the
-  feeding companion, empty = first; `enabled` nil = on). Stored as
-  `mqtt_settings.node_companion_id` (a real FK, ON DELETE SET NULL) and
-  resolved to the companion **name** in `assembleFromRows` — so renaming the
-  feed node no longer breaks the reference. The MqttPage node selector is by
-  companion id. Legacy per-companion `[companion.mqtt]` blocks are hoisted by
-  `ApplyDefaults` on load — first one wins. At runtime `startCompanions` copies
-  the block into the selected companion's config; `CompanionConfig.Mqtt` is
-  otherwise deprecated.
+- **MQTT is top-level, one node, always named.** `Config.Mqtt` (`mqtt.nodeKind`
+  is `companion`, the default, or `repeater`; for a companion `mqtt.node` names
+  it; `enabled` nil = on). Stored as `mqtt_settings.node_kind` (migration 028,
+  CHECKed) and `node_companion_id` (a real FK, ON DELETE SET NULL), resolved to
+  the companion **name** in `assembleFromRows`, so renaming the feed node
+  doesn't break the reference. Nothing falls back to "the first companion":
+  028 writes the first companion's id into a companion feed that named none,
+  an imported file naming no node stores its first companion, and a feed
+  naming no running node publishes nothing (logged). `PUT /api/config/mqtt`
+  requires `nodeKind`, and a `nodeCompanionId` for a companion feed whenever a
+  companion exists; it refuses a repeater that isn't configured, a companion id
+  that doesn't exist, an id with the repeater, and a companion feed with no
+  companion while MQTT publishes (enabled, with an enabled broker). Any config
+  write that would leave MQTT publishing with no node, such as enabling a
+  broker, is a 422; one that finds it so already (an upgrade or a restore) is
+  let through. Deleting the node that feeds MQTT is a 409 while it publishes;
+  otherwise the choice is cleared. A backup restored without the repeater
+  clears a repeater feed's choice the same way, or the config wouldn't load. Legacy per-companion
+  `[companion.mqtt]` blocks are hoisted by `ApplyDefaults` on load, first one
+  wins; `CompanionConfig.Mqtt` is otherwise unused. At runtime the app owns the
+  one observer (`app/mqtt_feed.go`), built with the feeding node's name and
+  identity, and rebuilds it only when the MQTT settings or that node change.
 - **Broker topics are templates.** `broker.packetTopic` / `broker.statusTopic`
   take placeholders `{iata} {pubkey} {name}` (meshcoretomqtt's `{IATA}` /
   `{PUBLIC_KEY}` uppercase forms also resolve); empty = the old hardcoded
@@ -564,7 +577,7 @@ PUT  /api/config/repeater/scope                              { floodScope }   (e
 PUT  /api/config/repeater/home                               { region }       ("*" for none; a label, as `region home`)
 PUT  /api/config/regions                                     { regions: [{name, parent}], floodScope }   (the list and default together; both required, every parent too)
 GET|POST /api/discover/regions                               (Discover nearby: POST starts or joins a run, 503 without a companion; poll GET for phase listening|asking|done)
-GET  /api/config/mqtt                                        (feed settings; node by companion id)
+GET  /api/config/mqtt                                        (feed settings; nodeKind, companion by id)
 PUT  /api/config/mqtt
 GET  /api/config/mqtt/brokers
 POST /api/config/mqtt/brokers          PUT|DELETE /api/config/mqtt/brokers/{id}

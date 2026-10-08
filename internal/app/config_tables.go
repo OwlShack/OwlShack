@@ -250,7 +250,10 @@ func assembleFromRows(rows *configRows) *config.Config {
 			Owner:          mq.Owner,
 			Email:          mq.Email,
 		}
-		if mq.NodeCompanionID != nil {
+		if mq.NodeKind == config.MqttNodeRepeater {
+			kind := config.MqttNodeRepeater
+			m.NodeKind = &kind
+		} else if mq.NodeCompanionID != nil {
 			if name, ok := idToName[*mq.NodeCompanionID]; ok {
 				m.Node = &name
 			}
@@ -295,7 +298,7 @@ func hasMqttConfig(mq *store.MqttSettings, brokers []store.Broker) bool {
 	if len(brokers) > 0 {
 		return true
 	}
-	return mq.Enabled != nil || mq.NodeCompanionID != nil || mq.IataCode != nil ||
+	return mq.Enabled != nil || mq.NodeKind == config.MqttNodeRepeater || mq.NodeCompanionID != nil || mq.IataCode != nil ||
 		mq.StatusInterval != nil || mq.Owner != nil || mq.Email != nil
 }
 
@@ -511,18 +514,23 @@ func replaceCompanionChildren(ctx context.Context, st *store.Store, companionID 
 }
 
 func writeMqtt(ctx context.Context, st *store.Store, cfg *config.Config, nameToID map[string]int64) error {
-	var mq store.MqttSettings
+	mq := store.MqttSettings{NodeKind: config.MqttNodeCompanion}
 	var brokers []config.BrokerConfig
+	if cfg.Mqtt.FedByRepeater() {
+		mq.NodeKind = config.MqttNodeRepeater
+	}
 	if cfg.Mqtt != nil {
 		mq.Enabled = cfg.Mqtt.Enabled
 		mq.IataCode = cfg.Mqtt.IataCode
 		mq.StatusInterval = cfg.Mqtt.StatusInterval
 		mq.Owner = cfg.Mqtt.Owner
 		mq.Email = cfg.Mqtt.Email
-		if cfg.Mqtt.Node != nil && *cfg.Mqtt.Node != "" {
-			if id, ok := nameToID[*cfg.Mqtt.Node]; ok {
-				mq.NodeCompanionID = &id
-			}
+		node := ""
+		if cfg.Mqtt.Node != nil {
+			node = *cfg.Mqtt.Node
+		}
+		if id, ok := nameToID[node]; ok && node != "" {
+			mq.NodeCompanionID = &id
 		}
 		brokers = cfg.Mqtt.Brokers
 	}
@@ -582,6 +590,7 @@ func initConfigTables(ctx context.Context, st *store.Store) (*config.Config, err
 		if err := cfg.EnsureNodeKeys(); err != nil {
 			return nil, err
 		}
+		nameImportedMqttNode(cfg)
 		if err := persistToTables(ctx, st, cfg); err != nil {
 			return nil, err
 		}
@@ -601,6 +610,15 @@ func initConfigTables(ctx context.Context, st *store.Store) (*config.Config, err
 	}
 	slog.Info("no config found; bootstrapped a quiet default, complete setup in the web UI")
 	return readConfigFromTables(ctx, st)
+}
+
+// nameImportedMqttNode stores the node an imported MQTT block spoke as when it named none: the first companion.
+func nameImportedMqttNode(cfg *config.Config) {
+	if cfg.Mqtt == nil || cfg.Mqtt.FedByRepeater() || (cfg.Mqtt.Node != nil && *cfg.Mqtt.Node != "") || len(cfg.Companions) == 0 {
+		return
+	}
+	name := cfg.Companions[0].Name
+	cfg.Mqtt.Node = &name
 }
 
 // persistToTables writes a config through the store's single writer goroutine.

@@ -127,7 +127,9 @@ func (r *SettingsRepo) Set(ctx context.Context, s *Settings) error {
 
 // MqttSettings is the single-row MQTT config; NodeCompanionID is a surrogate id, so renaming the companion is harmless.
 type MqttSettings struct {
-	Enabled         *bool
+	Enabled *bool
+	// NodeKind is "companion" (NodeCompanionID) or "repeater".
+	NodeKind        string
 	NodeCompanionID *int64
 	IataCode        *string
 	StatusInterval  *int
@@ -140,9 +142,9 @@ type MqttRepo struct{ db *sql.DB }
 func (r *MqttRepo) Get(ctx context.Context) (*MqttSettings, error) {
 	var m MqttSettings
 	err := r.db.QueryRowContext(ctx, `
-		SELECT enabled, node_companion_id, iata_code, status_interval, owner, email
+		SELECT enabled, node_kind, node_companion_id, iata_code, status_interval, owner, email
 		FROM mqtt_settings WHERE id = 1`).Scan(
-		&m.Enabled, &m.NodeCompanionID, &m.IataCode, &m.StatusInterval, &m.Owner, &m.Email,
+		&m.Enabled, &m.NodeKind, &m.NodeCompanionID, &m.IataCode, &m.StatusInterval, &m.Owner, &m.Email,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("getting mqtt settings: %w", err)
@@ -153,13 +155,13 @@ func (r *MqttRepo) Get(ctx context.Context) (*MqttSettings, error) {
 func (r *MqttRepo) Set(ctx context.Context, m *MqttSettings) error {
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO mqtt_settings
-			(id, enabled, node_companion_id, iata_code, status_interval, owner, email)
-		VALUES (1, ?, ?, ?, ?, ?, ?)
+			(id, enabled, node_kind, node_companion_id, iata_code, status_interval, owner, email)
+		VALUES (1, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
-			enabled=excluded.enabled, node_companion_id=excluded.node_companion_id,
+			enabled=excluded.enabled, node_kind=excluded.node_kind, node_companion_id=excluded.node_companion_id,
 			iata_code=excluded.iata_code, status_interval=excluded.status_interval,
 			owner=excluded.owner, email=excluded.email`,
-		m.Enabled, m.NodeCompanionID, m.IataCode, m.StatusInterval, m.Owner, m.Email,
+		m.Enabled, m.NodeKind, m.NodeCompanionID, m.IataCode, m.StatusInterval, m.Owner, m.Email,
 	)
 	if err != nil {
 		return fmt.Errorf("setting mqtt settings: %w", err)

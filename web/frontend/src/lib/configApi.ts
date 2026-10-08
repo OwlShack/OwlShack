@@ -91,8 +91,11 @@ export function defaultBoard(boards: SpiBoard[]): SpiBoard | undefined {
   return boards.find((b) => b.verified === "hardware") ?? boards[0];
 }
 
+export type MqttNodeKind = "companion" | "repeater";
+
 export interface MqttSettings {
   enabled: boolean | null;
+  nodeKind: MqttNodeKind;
   nodeCompanionId: number | null;
   iataCode: string | null;
   statusInterval: number | null;
@@ -288,6 +291,7 @@ export interface SettingsInput {
 
 export interface MqttInput {
   enabled?: boolean | null;
+  nodeKind: MqttNodeKind;
   nodeCompanionId?: number | null;
   iataCode?: string | null;
   statusInterval?: number | null;

@@ -38,6 +38,7 @@ type settingsDTO struct {
 
 type mqttDTO struct {
 	Enabled         *bool   `json:"enabled"`
+	NodeKind        string  `json:"nodeKind"`
 	NodeCompanionID *int64  `json:"nodeCompanionId"`
 	IataCode        *string `json:"iataCode"`
 	StatusInterval  *int    `json:"statusInterval"`
@@ -183,7 +184,7 @@ func (s *Server) handleGetMqtt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, mqttDTO{
-		Enabled: m.Enabled, NodeCompanionID: m.NodeCompanionID, IataCode: m.IataCode,
+		Enabled: m.Enabled, NodeKind: m.NodeKind, NodeCompanionID: m.NodeCompanionID, IataCode: m.IataCode,
 		StatusInterval: m.StatusInterval, Owner: m.Owner, Email: m.Email,
 	})
 }

@@ -107,6 +107,7 @@ func importConfigFile(ctx context.Context, db *store.Store, path string) (*confi
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("config %s: %w", resolved, err)
 	}
+	nameImportedMqttNode(cfg)
 	// Importing a file is a deliberate configuration step, so skip the wizard.
 	complete := true
 	cfg.SetupComplete = &complete
