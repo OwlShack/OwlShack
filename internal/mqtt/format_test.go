@@ -195,7 +195,7 @@ func TestFormatStatus_SPICountersAreOmittedUnlessMeasured(t *testing.T) {
 	}
 }
 
-// The KISS-only counters went to pointers internally; this schema is shared with meshcore-bot and
+// The KISS-only counters went to pointers internally; this schema is shared with OwlBot and
 // CoreScope, so a nil must still publish 0 there rather than silently dropping the key.
 func TestFormatStatus_KISSCountersStayOnTheWireWhenUnmeasured(t *testing.T) {
 	raw, err := formatStatus("online", "n", "id", modem.RadioInfo{}, modem.DeviceStats{},

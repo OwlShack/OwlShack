@@ -1,6 +1,6 @@
 # MQTT schema & radio settings
 
-The published MQTT wire schema (shared with meshcore-bot), the TX duty cycle, and path hash size.
+The published MQTT wire schema (shared with OwlBot), the TX duty cycle, and path hash size.
 
 ## MQTT wire schema
 
@@ -52,7 +52,7 @@ Board readings live **inside `stats`** — `battery_mv` (millivolts, never a
 percentage of our own devising), `mcu_temp_c`, `noise_floor`, `rx_air_secs`.
 
 `statsBlock` in [`internal/mqtt/format.go`](../internal/mqtt/format.go) is a
-**shared schema with meshcore-bot**: change a wire name in both repos or
+**shared schema with OwlBot**: change a wire name in both repos or
 downstream sees two dialects. Go shapes need not match (the bot returns
 `hardware.ModemStats` directly, being KISS-only).
 
