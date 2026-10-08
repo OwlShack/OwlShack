@@ -8,6 +8,7 @@ import {
   MapPin,
   MoreVertical,
   Pencil,
+  RefreshCw,
   Route,
   Search,
   Share2,
@@ -90,6 +91,15 @@ export function ChatHeaderMenu({
   const isChannel = conversation.type === "channel";
   const isContact = conversation.type === "contact";
   const managed = conversation.pubkey && ["ROOM", "SENSOR"].includes(conversation.peerType?.toUpperCase() ?? "");
+  const isRoom = conversation.pubkey && conversation.peerType?.toUpperCase() === "ROOM";
+  const resumePosts = async () => {
+    try {
+      await request(`/api/companions/${encodeURIComponent(companion)}/rooms/${conversation.pubkey}/keepalive`, "POST");
+      toast.success("Asked the room to resume; posts it hasn't sent you will arrive here");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't reach the room");
+    }
+  };
 
   return (
     <>
@@ -135,6 +145,15 @@ export function ChatHeaderMenu({
             >
               <DoorOpen className="size-3.5" />
               Manage
+            </DropdownMenuItem>
+          )}
+          {isRoom && (
+            <DropdownMenuItem
+              onClick={() => void resumePosts()}
+              className="font-mono text-xs uppercase tracking-[0.08em] rounded-none"
+            >
+              <RefreshCw className="size-3.5" />
+              Resume posts
             </DropdownMenuItem>
           )}
 

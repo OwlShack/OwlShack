@@ -204,7 +204,7 @@ export function RepeaterDetailPage({ kind = "repeater" }: { kind?: AdminNodeKind
     ...(isSensor ? [] : [{ to: companionPath, label: "messages" }]),
   ];
 
-  // The /repeaters/ path is type-agnostic; rooms have their own login, status and keep-alive under /rooms/.
+  // The /repeaters/ path is type-agnostic; rooms have their own login and status under /rooms/.
   const apiBase = `/api/companions/${encodeURIComponent(decodedName)}/repeaters/${encodeURIComponent(decodedPubkey)}`;
   const roomApiBase = `/api/companions/${encodeURIComponent(decodedName)}/rooms/${encodeURIComponent(decodedPubkey)}`;
   // Shares the key chat's RoomJoinBar uses, so a password saved here joins the room in chat too.
@@ -334,11 +334,6 @@ export function RepeaterDetailPage({ kind = "repeater" }: { kind?: AdminNodeKind
   useEffect(() => {
     bootstrap();
   }, [bootstrap]);
-
-  const keepAlive = useCallback(async () => {
-    const r = await remoteFetch(`${roomApiBase}/keepalive`, { method: "POST" });
-    if (!r.ok) throw new Error(await apiErrorMessage(r, "Keep-alive failed"));
-  }, [roomApiBase, remoteFetch]);
 
   const handleLogin = useCallback(async () => {
     setLoggingIn(true);
@@ -666,7 +661,6 @@ export function RepeaterDetailPage({ kind = "repeater" }: { kind?: AdminNodeKind
                   apiBase={apiBase}
                   statusUrl={isRoom ? `${roomApiBase}/status` : `${apiBase}/status`}
                   kind={kind}
-                  onKeepAlive={isRoom ? keepAlive : undefined}
                   active={tab === "status"}
                   onPathMayChange={refreshPath}
                 />
@@ -881,20 +875,17 @@ function StatusTab({
   apiBase,
   statusUrl,
   kind,
-  onKeepAlive,
   active,
   onPathMayChange,
 }: {
   apiBase: string;
   statusUrl?: string;
   kind: AdminNodeKind;
-  onKeepAlive?: () => Promise<void>;
   active: boolean;
   onPathMayChange?: () => void;
 }) {
   const remoteFetch = useRemoteFetch();
   const isRoom = kind === "room";
-  const [resyncing, setResyncing] = useState(false);
   const [status, setStatus] = useState<Status | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -937,29 +928,6 @@ function StatusTab({
           <RefreshCw className={cn("size-3", loading && "animate-spin")} />
           refresh
         </Button>
-        {onKeepAlive && (
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={resyncing}
-            onClick={async () => {
-              setResyncing(true);
-              try {
-                await onKeepAlive();
-                toast.success("Keep-alive sent — posts will resume in chat");
-              } catch (e) {
-                toast.error(e instanceof Error ? e.message : "Keep-alive failed");
-              } finally {
-                setResyncing(false);
-              }
-            }}
-            className="rounded-none font-mono text-[10px] uppercase tracking-[0.12em]"
-            title="Send a keep-alive so the room resumes pushing posts"
-          >
-            <RefreshCw className={cn("size-3", resyncing && "animate-spin")} />
-            resync posts
-          </Button>
-        )}
       </div>
       {err && (
         <Alert variant="destructive">
