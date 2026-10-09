@@ -45,7 +45,16 @@ radio/connection change still restarts everything (modem reconnect);
   so it adds no link traffic; its sample time is the board's last answer, kept
   across a reconnect like health's, and a 0 mV battery (the firmware's "not
   supported") reads 0 V, as the firmware sends it. SPI has no board, so the
-  provider is unavailable there.
+  provider is unavailable there. On KISS the same 30 s poll also sends
+  `GET_SENSORS` with the environment permission and keeps the decoded LPP; each
+  channel the board reports is a `radio-board-sensor` (option `channel`, 2 to
+  255, one sensor per channel), reading in the I2C drivers' metrics and units,
+  and the channel map may only pick what that channel reads now (any board
+  metric while it reads nothing, so a sensor that failed to start after a
+  reboot doesn't block the node's map). Board sensors go stale on their own
+  query's answers, not the board's. The firmware numbers board channels in the
+  order it found its sensors, so rewiring the board can move one. Position is
+  not asked for, and openHop has no sensors command.
   `companions.telem_base/loc/env` hold who may read each telemetry class
   (`deny`, `selected`, `contacts`), written only by
   `PUT /api/config/companions/{id}/telemetry`, so every other companion edit

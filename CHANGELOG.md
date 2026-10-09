@@ -7,6 +7,10 @@ top until tagged.
 
 ### Added
 
+- **Sensors wired to a KISS modem show on the Sensors page.** A BME280 or other sensor on the
+  modem's board appears in Add sensor as a board sensor, one per channel the board reports. Once
+  added it reads like a sensor wired to the Pi, and you can share it over the mesh from the channel
+  map. If you rewire the board's sensors, check each board sensor still reads the right one.
 - **Your repeater can feed MQTT.** On the MQTT page, pick your repeater as the node, and LetsMesh,
   CoreScope and other brokers see the feed under the repeater's own name and key. The node that
   feeds MQTT can't be deleted while MQTT is on; pick another node first.
