@@ -17,6 +17,8 @@ type ChannelRef struct {
 	PrivateKey string `json:"privateKey,omitempty" yaml:"privateKey,omitempty" toml:"privateKey,omitempty"`
 	// FloodScope is this channel's region; inherit takes the companion's.
 	FloodScope FloodScope `json:"floodScope,omitempty" yaml:"floodScope,omitempty" toml:"floodScope,omitempty"`
+	// Slot is the node's channel slot; nil, as in a file written before slots were kept, takes the first free one.
+	Slot *int `json:"slot,omitempty" yaml:"slot,omitempty" toml:"slot,omitempty"`
 }
 
 func (cr *ChannelRef) UnmarshalText(text []byte) error {

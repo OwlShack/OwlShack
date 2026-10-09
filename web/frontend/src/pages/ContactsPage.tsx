@@ -1,6 +1,6 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { CircleDashed, UserPlus } from "lucide-react";
+import { CircleDashed, Star, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { HeaderButton } from "@/components/HeaderButton";
@@ -16,12 +16,16 @@ import { PeerTypePill } from "@/components/StatusIndicator";
 import { AddContactDialog } from "@/components/AddContactDialog";
 import { timeAgo, truncateMid } from "@/lib/format";
 import { contactDetailPath } from "@/lib/routes";
+import { apiErrorMessage } from "@/lib/apiError";
+import { cn } from "@/lib/utils";
 
 interface Contact {
   peerPubkey: string;
   name: string;
   type?: string;
   addedAt: string;
+  // favourite is the MeshCore app's star; the app and this page set the same one.
+  metadata: { favourite?: boolean };
 }
 
 export function ContactsPage() {
@@ -70,10 +74,44 @@ export function ContactsPage() {
     [companion, load],
   );
 
+  // The star shows at once, but the order stays as loaded until the next load, so no row moves from under the pointer or the keyboard.
+  const [stars, setStars] = useState<{ list: Contact[] | null; on: Record<string, boolean> }>({ list: null, on: {} });
+  const starred = stars.list === contacts ? stars.on : {};
+  const setStar = useCallback(
+    (pubkey: string, on: boolean) =>
+      setStars((s) => ({ list: contacts, on: { ...(s.list === contacts ? s.on : {}), [pubkey]: on } })),
+    [contacts],
+  );
+  const isFavourite = (c: Contact) => starred[c.peerPubkey] ?? !!c.metadata.favourite;
+
+  const saving = useRef(new Set<string>());
+  const toggleFavourite = useCallback(
+    async (c: Contact, was: boolean) => {
+      if (saving.current.has(c.peerPubkey)) return;
+      saving.current.add(c.peerPubkey);
+      setStar(c.peerPubkey, !was);
+      try {
+        const res = await fetch(
+          `/api/companions/${encodeURIComponent(companion)}/contacts/${c.peerPubkey}`,
+          { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ favourite: !was }) },
+        );
+        if (!res.ok) throw new Error(await apiErrorMessage(res, "Failed to save the favourite"));
+      } catch (e) {
+        setStar(c.peerPubkey, was);
+        toast.error(e instanceof Error ? e.message : "Failed to save the favourite");
+      } finally {
+        saving.current.delete(c.peerPubkey);
+      }
+    },
+    [companion, setStar],
+  );
+
   const contactsSorted = useMemo(() => {
     if (!contacts) return [];
-    return [...contacts].sort((a, b) =>
-      (a.name || "").localeCompare(b.name || ""),
+    return [...contacts].sort(
+      (a, b) =>
+        Number(!!b.metadata.favourite) - Number(!!a.metadata.favourite) ||
+        (a.name || "").localeCompare(b.name || ""),
     );
   }, [contacts]);
 
@@ -152,6 +190,8 @@ export function ContactsPage() {
                   key={c.peerPubkey}
                   companion={companion}
                   contact={c}
+                  favourite={isFavourite(c)}
+                  onToggleFavourite={() => void toggleFavourite(c, isFavourite(c))}
                   confirming={confirmRemove === c.peerPubkey}
                   onAskRemove={() => setConfirmRemove(c.peerPubkey)}
                   onCancel={() => setConfirmRemove(null)}
@@ -179,6 +219,8 @@ export function ContactsPage() {
 function ContactRow({
   companion,
   contact,
+  favourite,
+  onToggleFavourite,
   confirming,
   onAskRemove,
   onCancel,
@@ -186,6 +228,8 @@ function ContactRow({
 }: {
   companion: string;
   contact: Contact;
+  favourite: boolean;
+  onToggleFavourite: () => void;
   confirming: boolean;
   onAskRemove: () => void;
   onCancel: () => void;
@@ -217,7 +261,17 @@ function ContactRow({
         </div>
       </Link>
 
-      <div className="flex items-center shrink-0">
+      <div className="flex items-center gap-1 shrink-0">
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          onClick={onToggleFavourite}
+          aria-pressed={favourite}
+          aria-label={`Favourite ${displayName}`}
+          className={cn(favourite ? "text-primary hover:text-primary/80" : "text-muted-foreground/60 hover:text-foreground")}
+        >
+          <Star className={cn("size-3.5", favourite && "fill-current")} />
+        </Button>
         <InlineConfirm
           confirming={confirming}
           onAskRemove={onAskRemove}

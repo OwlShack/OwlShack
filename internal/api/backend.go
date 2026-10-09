@@ -11,6 +11,10 @@ import (
 // Backend is the seam between the HTTP/WS layer and the domain; api never imports the domain.
 type Backend interface {
 	Companions() []CompanionInfo
+	// CompanionApp is the MeshCore app's access to a running companion; ok is false for a companion not running.
+	CompanionApp(name string) (status CompanionAppStatus, ok bool)
+	// DisconnectCompanionApp drops the app connected to a companion; false when its access is off.
+	DisconnectCompanionApp(name string) bool
 
 	// SPIBoards lists the radio hats this build knows how to wire.
 	SPIBoards() []SPIBoardInfo
@@ -113,6 +117,8 @@ type Backend interface {
 	SaveCompanion(ctx context.Context, in CompanionInput) (int64, error)
 	// SetCompanionTelemetry sets who may read each class of a companion's telemetry.
 	SetCompanionTelemetry(ctx context.Context, id int64, in CompanionTelemetryInput) error
+	// SetCompanionApp turns the MeshCore app's TCP access on or off and picks its port.
+	SetCompanionApp(ctx context.Context, id int64, in CompanionAppInput) error
 	DeleteCompanion(ctx context.Context, id int64) error
 	SaveChannel(ctx context.Context, in ChannelInput) (int64, error)
 	DeleteChannel(ctx context.Context, id int64) error
@@ -626,7 +632,8 @@ type CompanionInput struct {
 	Longitude      *float64 `json:"longitude"`
 	AdvertInterval *int     `json:"advertInterval"`
 	PathHashSize   *int     `json:"pathHashSize"`
-	FloodScope     string   `json:"floodScope"` // "inherit", "everywhere" or "region:<name>"; required
+	FloodScope     string   `json:"floodScope"`    // "inherit", "everywhere" or "region:<name>"; required
+	ShareLocation  *bool    `json:"shareLocation"` // whether adverts carry the position; required
 }
 
 // CompanionTelemetryInput is who may read each class: "deny", "selected" or "contacts".
@@ -634,6 +641,22 @@ type CompanionTelemetryInput struct {
 	Base        string `json:"base"`
 	Location    string `json:"location"`
 	Environment string `json:"environment"`
+}
+
+// CompanionAppStatus is what the companion's page shows about its app port: whether it is open, and who is using it.
+type CompanionAppStatus struct {
+	Enabled   bool   `json:"enabled"`
+	Port      int    `json:"port,omitempty"`
+	Listening bool   `json:"listening"`
+	Error     string `json:"error,omitempty"`
+	Client    string `json:"client,omitempty"`
+	Since     string `json:"since,omitempty"`
+}
+
+// CompanionAppInput is the MeshCore app's access; both fields are required.
+type CompanionAppInput struct {
+	Enabled *bool `json:"enabled"`
+	Port    *int  `json:"port"`
 }
 
 type ChannelInput struct {

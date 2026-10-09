@@ -27,6 +27,8 @@ type ContactMetadata struct {
 
 	// TelemPerms is which classes this contact may read (sensor.Perm* bits), read only where the mode is "selected".
 	TelemPerms uint8 `json:"telemPerms,omitempty"`
+	// Favourite is the MeshCore app's star, kept for it; the firmware's contact flags bit 0.
+	Favourite bool `json:"favourite,omitempty"`
 }
 
 type Contact struct {
@@ -231,6 +233,18 @@ func (r *ContactRepo) SetFloodScope(ctx context.Context, companionID int64, peer
 	)
 	if err != nil {
 		return fmt.Errorf("setting contact region: %w", err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return ErrNotContact
+	}
+	return nil
+}
+
+// SetName renames a contact until its next advert names it again, as the firmware does.
+func (r *ContactRepo) SetName(ctx context.Context, companionID int64, peerPubKey []byte, name string) error {
+	res, err := r.db.ExecContext(ctx, `UPDATE companion_contacts SET name = ? WHERE companion_id = ? AND peer_pubkey = ?`, name, companionID, peerPubKey)
+	if err != nil {
+		return fmt.Errorf("renaming contact: %w", err)
 	}
 	if n, err := res.RowsAffected(); err == nil && n == 0 {
 		return ErrNotContact

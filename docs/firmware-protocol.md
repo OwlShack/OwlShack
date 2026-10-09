@@ -484,6 +484,44 @@ existing `MessageGroup` sender rendering already handles that.
 - **Still not done**: auto re-join on startup, and surfacing the keep-alive
   ACK's unsynced-post count (we don't listen for that ACK).
 
+## The MeshCore app over TCP (internal/companionapp)
+
+A companion with app access on serves the firmware's companion protocol on its
+port, as `examples/companion_radio` does over WiFi: `<` + u16 LE length + payload
+in, `>` frames out, 176 bytes at most (a longer header drops the connection),
+one app at a time and the last to connect wins. DEVICE_INFO claims
+FIRMWARE_VER_CODE 13 (anon requests to non-contacts, no RUN_CLI_COMMAND) with
+the BLE pin always 0. There is no password, so the handlers are an allowlist:
+
+- Served as the firmware does: handshake, contacts (`since` is when a contact
+  was added or last heard), DMs and channel posts (sent through the companion's
+  own send path, so they are stored, shown and retried like any other; SENT
+  carries our own ack tag and SEND_CONFIRMED follows delivery), the offline
+  queue, login, status, telemetry, binary and anon requests, path discovery
+  (flooded, and the route is left alone), trace, discover-nearby control data,
+  CLI over a logged-in session, adverts, import and self export, the send scope
+  (CMD 54, per connection, only for regions in the list), time, battery, the
+  three stats replies (transmit counts and airtime are the shared radio's; what
+  was heard, its airtime and the last SNR and RSSI are counted while the port is
+  open), and the pushes for messages, adverts, paths, the RX log, traces and
+  control data.
+- Saved as the companion's own settings, through the same checks and reload as
+  a save from the UI: its name (cut to 31 bytes, as the firmware keeps it), its
+  position (0,0 is none), the telemetry modes and whether adverts share the
+  position (SET_OTHER_PARAMS; auto-adding contacts and extra acks are refused),
+  its default scope (a region in the list, or none), the path hash mode, and
+  channels by slot (SET_CHANNEL under the Channels page's rules: Public and a
+  hashtag channel are kept by name, a bot's channel cannot be cleared, only
+  Public is renamed in place). Contacts take a new name until their next
+  advert, the favourite star and telemetry grants. A rebuild that moves a
+  channel to another slot drops the app, which reconnects and reads them again.
+- Refused: private key export and import (DISABLED), signing, reboot, factory
+  reset, set PIN, RUN_CLI_COMMAND, raw packets and raw data, custom variables,
+  channel data, and sharing or exporting another node's advert (not kept).
+- The radio's and the host's settings (radio, TX power, tuning, auto-add, the
+  clock within 60 s) answer OK when the write changes nothing, as the app
+  re-saves a whole form, and UNSUPPORTED when it would change something.
+
 ## Message delivery status
 
 Messages have a `status` column: `NULL` (rx/legacy), `"sending"`, `"delivered"`, `"failed"`.

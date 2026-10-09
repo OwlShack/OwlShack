@@ -344,7 +344,7 @@ func TestCompanionTelemetryModes_SurviveAnEditAndAReload(t *testing.T) {
 		t.Fatal(err)
 	}
 	b := &backend{db: db}
-	id, err := b.SaveCompanion(ctx, api.CompanionInput{Name: "home", FloodScope: "inherit"})
+	id, err := b.SaveCompanion(ctx, api.CompanionInput{Name: "home", FloodScope: "inherit", ShareLocation: &share})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -372,7 +372,7 @@ func TestCompanionTelemetryModes_SurviveAnEditAndAReload(t *testing.T) {
 	}
 	// Checked before the edit too: a swapped scan swaps back when the edit writes what it read.
 	check("once set")
-	if _, err := b.SaveCompanion(ctx, api.CompanionInput{ID: id, Name: "home renamed", FloodScope: "inherit"}); err != nil {
+	if _, err := b.SaveCompanion(ctx, api.CompanionInput{ID: id, Name: "home renamed", FloodScope: "inherit", ShareLocation: &share}); err != nil {
 		t.Fatal(err)
 	}
 	check("after an edit")

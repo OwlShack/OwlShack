@@ -23,6 +23,9 @@ RUN case "${TARGETPLATFORM}" in \
 
 VOLUME [ "/data" ]
 
+# The web UI, and the MeshCore app's ports for companions that let it in.
+EXPOSE 8080 5000-5015
+
 WORKDIR /data
 
 CMD ["/usr/local/bin/OwlShack"]

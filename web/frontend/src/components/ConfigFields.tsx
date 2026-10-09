@@ -1,3 +1,4 @@
+import { useId } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -128,6 +129,7 @@ export function SwitchRow({
   onChange: (v: boolean) => void;
   disabled?: boolean;
 }) {
+  const hintId = useId();
   return (
     <label className="flex items-center justify-between gap-3 px-3 py-2 bg-card border border-border cursor-pointer">
       <div className="min-w-0">
@@ -135,12 +137,18 @@ export function SwitchRow({
           {label}
         </div>
         {hint && (
-          <div className="font-mono text-[10px] leading-snug text-muted-foreground/60">
+          <div id={hintId} className="font-mono text-[10px] leading-snug text-muted-foreground/60">
             {hint}
           </div>
         )}
       </div>
-      <Switch checked={checked} onCheckedChange={onChange} disabled={disabled} />
+      <Switch
+        checked={checked}
+        onCheckedChange={onChange}
+        disabled={disabled}
+        aria-label={label}
+        aria-describedby={hint ? hintId : undefined}
+      />
     </label>
   );
 }

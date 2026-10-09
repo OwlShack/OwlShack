@@ -140,7 +140,14 @@ export interface ConfigCompanion {
   telemetryLocation: TelemetryMode;
   telemetryEnvironment: TelemetryMode;
   floodScope: FloodScope;
+  shareLocation: boolean;
+  // The MeshCore app's TCP access; the port is kept while access is off, 0 when never chosen.
+  app: { enabled: boolean; port: number };
 }
+
+// The ports the app may be given, so a container can publish the whole range up front.
+export const APP_PORT_FIRST = 5000;
+export const APP_PORT_LAST = 5015;
 
 export type TelemetryMode = "deny" | "selected" | "contacts";
 
@@ -329,6 +336,7 @@ export interface CompanionInput {
   dmPolicy?: string;
   dmAllow?: string[] | null;
   floodScope: FloodScope;
+  shareLocation: boolean;
 }
 
 export interface ChannelInput {
@@ -497,6 +505,10 @@ export const configApi = {
   // Its own endpoint: sending these with the rest of a companion would let any other form reset them.
   setCompanionTelemetry: (id: number, input: CompanionTelemetryInput) =>
     request(`/api/config/companions/${id}/telemetry`, "PUT", input),
+
+  // Its own endpoint, so access is only ever turned on here and never by saving another form.
+  setCompanionApp: (id: number, input: { enabled: boolean; port: number }) =>
+    request(`/api/config/companions/${id}/app`, "PUT", input),
 
   createChannel: (companionId: number, input: ChannelInput) =>
     requestId(`/api/config/companions/${companionId}/channels`, "POST", input),

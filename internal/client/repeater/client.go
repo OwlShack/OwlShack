@@ -58,6 +58,18 @@ type pendingRequest struct {
 	sharedSecret   []byte
 	peerPubKeyByte byte
 	peerPubKey     [32]byte
+
+	// onSent hears the tag and the wait once the request is on its way.
+	onSent func(tag uint32, wait time.Duration, flood bool)
+	// discovery is the app's path discovery: always flooded, and the paths go to onPath, not into the route (firmware onContactPathRecv).
+	discovery bool
+	onPath    func(out, in PathBytes)
+}
+
+// PathBytes is a path as the firmware frames it: its length byte, which carries the hash size, then the hashes.
+type PathBytes struct {
+	Len  byte
+	Hops []byte
 }
 
 type pendingLogin struct {
@@ -202,7 +214,7 @@ func (rm *Client) sendBinaryRequest(pubkeyHex string, body []byte, timeout time.
 	}
 
 	// The session decrypts the response, so the pending entry needn't carry the secret.
-	return rm.roundtripRequest(peerIdentity.PublicKey(), peer, sess.sharedSecret, sess.localPubKey[0], body, timeout, label, false)
+	return rm.roundtripRequest(peerIdentity.PublicKey(), peer, sess.sharedSecret, sess.localPubKey[0], body, timeout, label, &pendingRequest{})
 }
 
 // replyTimeout sizes the wait on a repeater's reply from airtime, as the firmware sizes its ACK
@@ -239,8 +251,8 @@ func (rm *Client) routedPacket(peer *node.Peer, payloadType byte, payload []byte
 	return pkt, outPath, hashSize
 }
 
-// roundtripRequest awaits the tagged response; storeSecret puts the secret on the pending entry for sessionless matching.
-func (rm *Client) roundtripRequest(peerPub [32]byte, peer *node.Peer, sharedSecret []byte, localPubByte byte, body []byte, timeout time.Duration, label string, storeSecret bool) ([]byte, error) {
+// roundtripRequest awaits the tagged response; a pr carrying the secret is matched without a session.
+func (rm *Client) roundtripRequest(peerPub [32]byte, peer *node.Peer, sharedSecret []byte, localPubByte byte, body []byte, timeout time.Duration, label string, pr *pendingRequest) ([]byte, error) {
 	tag := rm.UniqueTimestamp()
 
 	plaintext := make([]byte, 4+len(body))
@@ -267,12 +279,13 @@ func (rm *Client) roundtripRequest(peerPub [32]byte, peer *node.Peer, sharedSecr
 		return nil, fmt.Errorf("encoding request: %w", err)
 	}
 
-	pr := &pendingRequest{peerPubKeyByte: peerPub[0]}
-	if storeSecret {
-		pr.sharedSecret = sharedSecret
-		pr.peerPubKey = peerPub
-	}
+	pr.peerPubKeyByte = peerPub[0]
 	pkt, outPath, hashSize := rm.routedPacket(peer, meshcore.PayloadTypeReq, reqBytes)
+	if pr.discovery {
+		routeType, pathLen := routeForPeer(nil, 0, rm.bytesPerHop(peerPub[:]))
+		pkt.Header = meshcore.MakeHeader(routeType, meshcore.PayloadTypeReq, 0)
+		pkt.PathLength, pkt.Path, outPath = pathLen, nil, nil
+	}
 	return rm.sendAwaitTag(tag, pr, pkt, outPath, hashSize, peerPub, timeout, label)
 }
 
@@ -296,6 +309,9 @@ func (rm *Client) sendAwaitTag(tag uint32, pr *pendingRequest, pkt *meshcore.Pac
 
 	wait := rm.replyTimeout(len(pkt.Payload), outPath, hashSize, timeout)
 	rm.log.Debug(label+" req sent", "peer", fmt.Sprintf("%x", peerPub[:6]), "tag", fmt.Sprintf("%08x", tag), "wait", wait)
+	if pr.onSent != nil {
+		pr.onSent(tag, wait, outPath == nil)
+	}
 
 	select {
 	case data := <-resultCh:
@@ -349,4 +365,42 @@ func (rm *Client) RequestRegions(pubkeyHex string, timeout time.Duration) (meshc
 		return meshcore.AnonRegionsReply{}, err
 	}
 	return meshcore.ParseAnonRegionsReply(data)
+}
+
+// AppAnonRequest is the MeshCore app's anonymous request: routed as the contact is, or zero-hop to a node only heard, as the firmware sends it.
+func (rm *Client) AppAnonRequest(pubkeyHex string, body []byte, timeout time.Duration, sent func(tag uint32, wait time.Duration, flood bool)) ([]byte, error) {
+	pubkeyBytes, err := hex.DecodeString(pubkeyHex)
+	if err != nil {
+		return nil, fmt.Errorf("%w: hex: %w", ErrBadPubkey, err)
+	}
+	peerID, err := meshcore.NewIdentityFromBytes(pubkeyBytes)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrBadPubkey, err)
+	}
+	secret, err := rm.node.SharedSecret(peerID)
+	if err != nil {
+		return nil, fmt.Errorf("deriving shared secret: %w", err)
+	}
+	tag := rm.UniqueTimestamp()
+	req, err := meshcore.NewAnonReq(rm.node.Identity(), peerID, append(binary.LittleEndian.AppendUint32(nil, tag), body...), secret)
+	if err != nil {
+		return nil, fmt.Errorf("encrypting anon req: %w", err)
+	}
+	payload, err := req.ToBytes()
+	if err != nil {
+		return nil, err
+	}
+	pub := peerID.PublicKey()
+	hashSize := rm.ownHashSize()
+	pkt := &meshcore.Packet{
+		Header:     meshcore.MakeHeader(meshcore.RouteTypeDirect, meshcore.PayloadTypeAnonReq, 0),
+		PathLength: meshcore.MakePathLen(hashSize, 0),
+		Payload:    payload,
+	}
+	outPath := []byte{}
+	if peer := rm.node.Peers().Lookup(pub); peer != nil {
+		pkt, outPath, hashSize = rm.routedPacket(peer, meshcore.PayloadTypeAnonReq, payload)
+	}
+	pr := &pendingRequest{sharedSecret: secret, peerPubKeyByte: pub[0], peerPubKey: pub, onSent: sent}
+	return rm.sendAwaitTag(tag, pr, pkt, outPath, hashSize, pub, timeout, "app-anon")
 }

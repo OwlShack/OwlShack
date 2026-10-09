@@ -32,6 +32,8 @@ telemetry, all persisted to SQLite. Built on the pure Go
   (KISS), an openHop Modem over USB or the network, or a bare SX1262 driven
   straight off a Pi's SPI bus, no firmware node needed.
 - **Bridges to MQTT.** Feeds aggregators like LetsMesh and CoreScope.
+- **Lets the MeshCore app in.** Turn on app access for a companion and the
+  official MeshCore app connects to it over TCP, as it would to a WiFi radio.
 
 The web UI is the configuration surface and the database is the source of
 truth; there is nothing to hand-edit.
@@ -219,12 +221,14 @@ Published to `ghcr.io/owlshack/owlshack` for `linux/386`, `amd64`,
 docker run -d \
   --device /dev/ttyACM0 \
   -p 8080:8080 \
+  -p 5000-5015:5000-5015 \
   -v "$PWD/data:/data" \
   -e TZ=Pacific/Auckland \
   ghcr.io/owlshack/owlshack
 ```
 
-Drop `--device` for a TCP radio connection. Set `TZ` to your own zone: the
+Drop `--device` for a TCP radio connection, and the `5000-5015` ports unless
+you let the MeshCore app connect to a companion. Set `TZ` to your own zone: the
 image carries the zone database but selects nothing, so without it the
 container's idea of local time is UTC.
 
@@ -329,6 +333,7 @@ Companions page.
 | `name` | Display name on the mesh, and the storage key for this companion's history |
 | `privateKey` | 64-hex ed25519 seed; leave it unset and one is generated and stored |
 | `latitude` / `longitude` | Advertised position (decimal degrees) |
+| `shareLocation` | Whether adverts carry the position; default `true` |
 | `advertInterval` | Seconds between adverts; `0` = never |
 | `channels` | Channels to join |
 | `trigger` | Triggers attached to this companion |
@@ -516,6 +521,12 @@ There is **no authentication** on the REST API or the UI. Anyone who can reach
 the port can reconfigure your radio, post as your companions, and drive any
 repeater you have logged into. Bind it to localhost, or put it behind a reverse
 proxy that authenticates.
+
+The MeshCore app's ports (5000 to 5015, off until you turn one on for a
+companion) have no password either, because the app protocol has none: anyone
+who can reach one can read that companion's messages and channel keys and send
+as it. They bind to the same host as the web UI, and the app cannot change the
+companion's settings, the radio or anything else in OwlShack.
 
 ## Docs
 

@@ -44,9 +44,30 @@ type CompanionConfig struct {
 	TelemetryLocation    *string `json:"telemetryLocation,omitempty" yaml:"telemetryLocation,omitempty" toml:"telemetryLocation,omitempty"`
 	TelemetryEnvironment *string `json:"telemetryEnvironment,omitempty" yaml:"telemetryEnvironment,omitempty" toml:"telemetryEnvironment,omitempty"`
 
+	// ShareLocation puts the position in this companion's adverts; nil shares, as before the setting existed.
+	ShareLocation *bool `json:"shareLocation,omitempty" yaml:"shareLocation,omitempty" toml:"shareLocation,omitempty"`
+
+	// App lets the MeshCore app connect to this companion over TCP.
+	App AppAccess `json:"app" yaml:"app" toml:"app"`
+
 	// Deprecated: mqtt lives at the top level of Config; legacy blocks here are hoisted by ApplyDefaults.
 	Mqtt *MqttConfig `json:"mqtt,omitempty" yaml:"mqtt,omitempty" toml:"mqtt,omitempty"`
 }
+
+// AppPortFirst and AppPortLast bound the app ports, so a container can publish the whole range up front.
+const (
+	AppPortFirst = 5000
+	AppPortLast  = 5015
+)
+
+// AppAccess is the MeshCore app's TCP access, which has no password; Port is kept while access is off.
+type AppAccess struct {
+	Enabled bool `json:"enabled" yaml:"enabled" toml:"enabled"`
+	Port    int  `json:"port,omitempty" yaml:"port,omitempty" toml:"port,omitempty"`
+}
+
+// SharesLocation reports whether adverts carry the position.
+func (c *CompanionConfig) SharesLocation() bool { return c.ShareLocation == nil || *c.ShareLocation }
 
 func (c *CompanionConfig) HasLatLon() bool {
 	if c.Latitude == nil || c.Longitude == nil {

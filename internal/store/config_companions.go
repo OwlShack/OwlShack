@@ -26,6 +26,11 @@ type Companion struct {
 	TelemEnv  string
 	// FloodScope is "inherit", "everywhere" or "region:<name>".
 	FloodScope string
+	// AppEnabled lets the MeshCore app connect on AppPort; the port is kept while access is off.
+	AppEnabled bool
+	AppPort    int
+	// ShareLocation puts the position in the companion's adverts.
+	ShareLocation bool
 }
 
 type CompanionRepo struct{ db *sql.DB }
@@ -34,7 +39,7 @@ func scanCompanion(s interface{ Scan(...any) error }) (*Companion, error) {
 	var c Companion
 	var dmAllow string
 	if err := s.Scan(&c.ID, &c.Name, &c.PrivateKey, &c.PubKey, &c.Latitude, &c.Longitude, &c.AdvertInterval, &c.PathHashSize, &c.DMPolicy, &dmAllow,
-		&c.TelemBase, &c.TelemLoc, &c.TelemEnv, &c.FloodScope); err != nil {
+		&c.TelemBase, &c.TelemLoc, &c.TelemEnv, &c.FloodScope, &c.AppEnabled, &c.AppPort, &c.ShareLocation); err != nil {
 		return nil, err
 	}
 	c.DMAllow = decodeList(dmAllow)
@@ -42,7 +47,7 @@ func scanCompanion(s interface{ Scan(...any) error }) (*Companion, error) {
 }
 
 const companionCols = `id, name, private_key, pubkey, latitude, longitude, advert_interval, path_hash_size, dm_policy, dm_allow,
-	telem_base, telem_loc, telem_env, flood_scope`
+	telem_base, telem_loc, telem_env, flood_scope, app_enabled, app_port, share_location`
 
 // DMPolicyContacts is the pre-column behaviour and the value written for an unset policy.
 const DMPolicyContacts = "contacts"
@@ -118,10 +123,10 @@ func (r *CompanionRepo) IDByName(ctx context.Context, name string) (int64, error
 func (r *CompanionRepo) Create(ctx context.Context, c *Companion) error {
 	res, err := r.db.ExecContext(ctx, `
 		INSERT INTO companions (name, private_key, pubkey, latitude, longitude, advert_interval, path_hash_size, dm_policy, dm_allow,
-			telem_base, telem_loc, telem_env, flood_scope)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			telem_base, telem_loc, telem_env, flood_scope, app_enabled, app_port, share_location)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		c.Name, c.PrivateKey, c.PubKey, c.Latitude, c.Longitude, c.AdvertInterval, c.PathHashSize, dmPolicyOrDefault(c.DMPolicy), encodeList(c.DMAllow),
-		telemModeOrDefault(c.TelemBase), telemModeOrDefault(c.TelemLoc), telemModeOrDefault(c.TelemEnv), scopeOrInherit(c.FloodScope))
+		telemModeOrDefault(c.TelemBase), telemModeOrDefault(c.TelemLoc), telemModeOrDefault(c.TelemEnv), scopeOrInherit(c.FloodScope), c.AppEnabled, c.AppPort, c.ShareLocation)
 	if err != nil {
 		return fmt.Errorf("inserting companion: %w", err)
 	}
@@ -135,10 +140,10 @@ func (r *CompanionRepo) Create(ctx context.Context, c *Companion) error {
 func (r *CompanionRepo) Update(ctx context.Context, c *Companion) error {
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE companions SET name=?, private_key=?, pubkey=?, latitude=?, longitude=?, advert_interval=?, path_hash_size=?, dm_policy=?, dm_allow=?,
-			telem_base=?, telem_loc=?, telem_env=?, flood_scope=?
+			telem_base=?, telem_loc=?, telem_env=?, flood_scope=?, app_enabled=?, app_port=?, share_location=?
 		WHERE id=?`,
 		c.Name, c.PrivateKey, c.PubKey, c.Latitude, c.Longitude, c.AdvertInterval, c.PathHashSize, dmPolicyOrDefault(c.DMPolicy), encodeList(c.DMAllow),
-		telemModeOrDefault(c.TelemBase), telemModeOrDefault(c.TelemLoc), telemModeOrDefault(c.TelemEnv), scopeOrInherit(c.FloodScope), c.ID)
+		telemModeOrDefault(c.TelemBase), telemModeOrDefault(c.TelemLoc), telemModeOrDefault(c.TelemEnv), scopeOrInherit(c.FloodScope), c.AppEnabled, c.AppPort, c.ShareLocation, c.ID)
 	if err != nil {
 		return fmt.Errorf("updating companion: %w", err)
 	}
@@ -168,23 +173,35 @@ type CompanionChannel struct {
 	Name        string
 	PrivateKey  string
 	FloodScope  string // "inherit", "everywhere" or "region:<name>"
+	// Slot is the node's channel slot; nil on Create takes the companion's first free one.
+	Slot *int
 }
 
 type ChannelRepo struct{ db *sql.DB }
 
+const channelCols = `id, companion_id, name, private_key, flood_scope, slot`
+
+func scanChannel(s interface{ Scan(...any) error }) (CompanionChannel, error) {
+	var c CompanionChannel
+	var slot int
+	err := s.Scan(&c.ID, &c.CompanionID, &c.Name, &c.PrivateKey, &c.FloodScope, &slot)
+	c.Slot = &slot
+	return c, err
+}
+
 // List returns every channel across all companions.
 func (r *ChannelRepo) List(ctx context.Context) ([]CompanionChannel, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, companion_id, name, private_key, flood_scope
-		FROM companion_channels ORDER BY companion_id ASC, id ASC`)
+		SELECT `+channelCols+`
+		FROM companion_channels ORDER BY companion_id ASC, slot ASC, id ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("querying channels: %w", err)
 	}
 	defer rows.Close()
 	var out []CompanionChannel
 	for rows.Next() {
-		var c CompanionChannel
-		if err := rows.Scan(&c.ID, &c.CompanionID, &c.Name, &c.PrivateKey, &c.FloodScope); err != nil {
+		c, err := scanChannel(rows)
+		if err != nil {
 			return nil, fmt.Errorf("scanning channel row: %w", err)
 		}
 		out = append(out, c)
@@ -197,16 +214,16 @@ func (r *ChannelRepo) List(ctx context.Context) ([]CompanionChannel, error) {
 
 func (r *ChannelRepo) ListByCompanion(ctx context.Context, companionID int64) ([]CompanionChannel, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, companion_id, name, private_key, flood_scope
-		FROM companion_channels WHERE companion_id = ? ORDER BY id ASC`, companionID)
+		SELECT `+channelCols+`
+		FROM companion_channels WHERE companion_id = ? ORDER BY slot ASC, id ASC`, companionID)
 	if err != nil {
 		return nil, fmt.Errorf("querying channels by companion: %w", err)
 	}
 	defer rows.Close()
 	var out []CompanionChannel
 	for rows.Next() {
-		var c CompanionChannel
-		if err := rows.Scan(&c.ID, &c.CompanionID, &c.Name, &c.PrivateKey, &c.FloodScope); err != nil {
+		c, err := scanChannel(rows)
+		if err != nil {
 			return nil, fmt.Errorf("scanning channel row: %w", err)
 		}
 		out = append(out, c)
@@ -218,10 +235,8 @@ func (r *ChannelRepo) ListByCompanion(ctx context.Context, companionID int64) ([
 }
 
 func (r *ChannelRepo) Get(ctx context.Context, id int64) (*CompanionChannel, error) {
-	var c CompanionChannel
-	err := r.db.QueryRowContext(ctx, `
-		SELECT id, companion_id, name, private_key, flood_scope FROM companion_channels WHERE id = ?`, id).
-		Scan(&c.ID, &c.CompanionID, &c.Name, &c.PrivateKey, &c.FloodScope)
+	c, err := scanChannel(r.db.QueryRowContext(ctx, `
+		SELECT `+channelCols+` FROM companion_channels WHERE id = ?`, id))
 	if err != nil {
 		return nil, fmt.Errorf("getting channel: %w", err)
 	}
@@ -229,9 +244,17 @@ func (r *ChannelRepo) Get(ctx context.Context, id int64) (*CompanionChannel, err
 }
 
 func (r *ChannelRepo) Create(ctx context.Context, c *CompanionChannel) error {
+	slot := -1
+	if c.Slot != nil {
+		slot = *c.Slot
+	}
+	// -1 asks for the lowest slot no other channel of the companion holds.
 	res, err := r.db.ExecContext(ctx, `
-		INSERT INTO companion_channels (companion_id, name, private_key, flood_scope) VALUES (?, ?, ?, ?)`,
-		c.CompanionID, c.Name, c.PrivateKey, scopeOrInherit(c.FloodScope))
+		INSERT INTO companion_channels (companion_id, name, private_key, flood_scope, slot)
+		VALUES (?1, ?2, ?3, ?4, CASE WHEN ?5 >= 0 THEN ?5 ELSE (
+			SELECT min(s.n) FROM (SELECT 0 AS n UNION ALL SELECT slot + 1 FROM companion_channels WHERE companion_id = ?1) s
+			WHERE s.n NOT IN (SELECT slot FROM companion_channels WHERE companion_id = ?1)) END)`,
+		c.CompanionID, c.Name, c.PrivateKey, scopeOrInherit(c.FloodScope), slot)
 	if err != nil {
 		return fmt.Errorf("inserting channel: %w", err)
 	}
