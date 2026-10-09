@@ -59,6 +59,8 @@ func boardReadings() (sensor.BoardReadings, error) {
 		HaveBattery: ds.HaveBattery,
 		MCUTempC:    ds.MCUTempC,
 		HaveMCUTemp: ds.HaveMCUTemp,
+		Sensors:     ds.Sensors,
+		HaveSensors: ds.HaveSensors,
 		At:          last,
 		SilentSince: silentFrom,
 	}, nil

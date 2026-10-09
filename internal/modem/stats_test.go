@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	meshcore "github.com/OwlShack/meshcore-go"
 	"github.com/OwlShack/meshcore-go/hardware"
 )
 
@@ -94,6 +95,12 @@ func TestKissStatsProvider_AnErrorReplyIsAnAnswer(t *testing.T) {
 type answeringFeed struct {
 	frameFeed
 	noise []byte
+	// sensors is the board's LPP answer; oldFirmware refuses the query as a firmware without it does.
+	sensors     []byte
+	oldFirmware bool
+	// sensorsAnswer is how many sensor queries get an answer; zero is all of them.
+	sensorsAnswer int
+	sensorsAsked  int
 }
 
 func (f *answeringFeed) Send(b []byte) error {
@@ -103,6 +110,18 @@ func (f *answeringFeed) Send(b []byte) error {
 	noise := f.noise
 	if noise == nil {
 		noise = []byte{0x9c, 0xff} // -100
+	}
+	if b[2] == hardware.HW_CMD_GET_SENSORS {
+		f.sensorsAsked++
+		if f.sensorsAnswer > 0 && f.sensorsAsked > f.sensorsAnswer {
+			return nil
+		}
+		data := append([]byte{hardware.HwResp(b[2])}, f.sensors...)
+		if f.oldFirmware {
+			data = []byte{hardware.HW_RESP_ERROR, hardware.HW_ERR_UNKNOWN_CMD}
+		}
+		go f.handler(&hardware.KissFrame{Command: hardware.KISS_CMD_SETHARDWARE, Data: data})
+		return nil
 	}
 	reply := map[byte][]byte{
 		hardware.HW_CMD_GET_STATS:       make([]byte, 12),
@@ -159,5 +178,62 @@ func TestKissStatsProvider_LateZeroReplyIsUnmeasured(t *testing.T) {
 	p.onNoiseFloor(0, []byte{0, 0})
 	if p.haveNoise {
 		t.Error("a 0 reply still counts as measured")
+	}
+}
+
+// The board's own sensors come back decoded, one LPP channel each; a firmware without the query reports none rather than failing the poll.
+func TestKissStatsProvider_BoardSensors(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		feed        *answeringFeed
+		wantSensors bool
+		wantCount   int
+	}{
+		{"a temperature and humidity on channel 2", &answeringFeed{sensors: []byte{2, meshcore.LPPTemperature, 0x00, 0xe1, 2, meshcore.LPPRelativeHumidity, 0x6e}}, true, 2},
+		{"no sensors", &answeringFeed{}, true, 0},
+		{"a firmware without the query", &answeringFeed{oldFirmware: true}, false, 0},
+	} {
+		tc.feed.frameFeed = frameFeed{dead: make(chan struct{})}
+		km := hardware.NewKissModem(tc.feed)
+		if err := km.Connect(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		ds := NewKissStatsProvider(km, RadioInfo{}).Stats(t.Context())
+		km.Close()
+		if ds.HaveSensors != tc.wantSensors || len(ds.Sensors) != tc.wantCount {
+			t.Errorf("%s: have %v with %d readings, want %v with %d", tc.name, ds.HaveSensors, len(ds.Sensors), tc.wantSensors, tc.wantCount)
+		}
+		if !ds.HaveBattery {
+			t.Errorf("%s: the battery went missing from the poll", tc.name)
+		}
+		if tc.wantCount == 2 && (ds.Sensors[0].Channel != 2 || ds.Sensors[0].Value != 22.5 || ds.Sensors[1].Value != 55.0) {
+			t.Errorf("%s: readings = %+v, want channel 2 at 22.5 °C and 55 %%", tc.name, ds.Sensors)
+		}
+	}
+}
+
+// A board whose sensor query stops answering while the rest of the poll does must not keep its last sensor readings as current.
+func TestKissStatsProvider_BoardSensorsGoStaleOnTheirOwn(t *testing.T) {
+	feed := &answeringFeed{frameFeed: frameFeed{dead: make(chan struct{})}, sensors: []byte{2, meshcore.LPPTemperature, 0x00, 0xe1}, sensorsAnswer: 1}
+	km := hardware.NewKissModem(feed)
+	if err := km.Connect(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	defer km.Close()
+	p := NewKissStatsProvider(km, RadioInfo{})
+	if ds := p.Stats(t.Context()); !ds.HaveSensors {
+		t.Fatal("the first poll has no sensors")
+	}
+	p.mu.Lock()
+	p.sensorsAt = p.sensorsAt.Add(-time.Minute)
+	p.mu.Unlock()
+	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	defer cancel()
+	ds := p.Stats(ctx)
+	if !ds.HaveBattery {
+		t.Fatal("the battery stopped answering too, so this doesn't test the sensors alone")
+	}
+	if ds.HaveSensors {
+		t.Errorf("sensor readings from a minute ago still read as current: %+v", ds.Sensors)
 	}
 }

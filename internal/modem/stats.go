@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/OwlShack/OwlShack/internal/logging"
+	meshcore "github.com/OwlShack/meshcore-go"
 	"github.com/OwlShack/meshcore-go/hardware"
 )
 
@@ -34,6 +35,9 @@ type DeviceStats struct {
 	// 0 °C is distinguishable from unknown.
 	MCUTempC    float64
 	HaveMCUTemp bool
+	// Sensors is what the board's own sensors read, one LPP channel each; HaveSensors is false until it answers the query.
+	Sensors     []meshcore.LPPReading
+	HaveSensors bool
 }
 
 // LinkStats mirrors hardware.ModemStats. Throughout, nil means the transport cannot measure that
@@ -100,13 +104,17 @@ type kissStatsProvider struct {
 	haveBattery bool
 	mcuTempC    float64
 	haveMCUTemp bool
+	sensors     []meshcore.LPPReading
+	haveSensors bool
+	// sensorsAt is the sensor query's own last answer, as the board's other answers don't vouch for it.
+	sensorsAt time.Time
 }
 
 // StaleReadingAfter is how long a board reading survives without the modem answering. Longer than
 // one probe interval so a single dropped reply does not flap the value in and out of the payload.
 const StaleReadingAfter = 45 * time.Second
 
-// kissQueryTimeout bounds one stats poll's four board queries together.
+// kissQueryTimeout bounds one stats poll's board queries together.
 const kissQueryTimeout = 3 * time.Second
 
 // ConnectedAt is when this link was set up, the start of a silence for a board that has never answered.
@@ -214,11 +222,20 @@ func (p *kissStatsProvider) Stats(ctx context.Context) DeviceStats {
 	} else {
 		record(func() { p.mcuTempC, p.haveMCUTemp = math.Round(float64(c)*10)/10, true })
 	}
+	// Last, as the firmware reads every sensor before it answers, so a slow one can't cost the poll the rest.
+	if lpp, err := p.modem.Sensors(ctx, meshcore.TelemPermEnvironment); err != nil {
+		p.log.Debug("board sensors unavailable", "error", err)
+	} else if rs, err := meshcore.LPPDecode(lpp); err != nil {
+		p.log.Debug("board sensors undecodable", "error", err)
+		record(func() { p.sensors, p.haveSensors = nil, false })
+	} else {
+		record(func() { p.sensors, p.haveSensors, p.sensorsAt = rs, true, time.Now() })
+	}
 
 	ds := p.snapshot()
 	p.log.Log(ctx, logging.LevelTrace, "stats polled",
 		"noise_floor", ds.NoiseFloor, "battery_mv", ds.BatteryMV,
-		"mcu_temp_c", ds.MCUTempC, "uptime_secs", ds.UptimeSecs,
+		"mcu_temp_c", ds.MCUTempC, "board_sensors", len(ds.Sensors), "uptime_secs", ds.UptimeSecs,
 		"readings_current", ds.HaveBattery || ds.HaveMCUTemp)
 	return ds
 }
@@ -241,6 +258,8 @@ func (p *kissStatsProvider) snapshot() DeviceStats {
 		UptimeSecs:     uint32(time.Since(p.startTime).Seconds()),
 		MCUTempC:       p.mcuTempC,
 		HaveMCUTemp:    p.haveMCUTemp && fresh,
+		Sensors:        p.sensors,
+		HaveSensors:    p.haveSensors && fresh && time.Since(p.sensorsAt) <= StaleReadingAfter,
 	}
 }
 
