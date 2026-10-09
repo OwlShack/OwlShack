@@ -48,6 +48,7 @@ type backend struct {
 	regionScan  *regionScanner
 	// mqtt is the observer speaking as the node MQTT is fed by, or nil when MQTT is off.
 	mqtt *mqtt.Observer
+	apps *appServers
 }
 
 func (b *backend) find(name string) (*companion.Companion, bool) {
@@ -336,20 +337,30 @@ func (b *backend) RepeaterNode() (*api.RepeaterNodeOps, bool) {
 
 // PersistChannels writes each companion's standalone channels back, leaving the rest of the config intact; it reads and writes in one writer turn, so a save in between isn't lost.
 func (b *backend) PersistChannels(ctx context.Context) error {
+	return persistChannels(ctx, b.db, b.companions, false)
+}
+
+// persistChannels writes these companions' running channels; strict refuses one no longer configured, which the Channels page skips as a deletion the reload has not caught up with.
+func persistChannels(ctx context.Context, db *store.Store, companions []*companion.Companion, strict bool) error {
 	var werr error
-	b.db.WriteSync(func() {
-		cfg, err := readConfigFromTables(ctx, b.db)
+	db.WriteSync(func() {
+		cfg, err := readConfigFromTables(ctx, db)
 		if err != nil {
 			werr = fmt.Errorf("reading config for persist: %w", err)
 			return
 		}
-		byName := make(map[string]int, len(cfg.Companions))
+		// By id: a companion the app just renamed still runs under its old name until the reload.
+		byID := make(map[int64]int, len(cfg.Companions))
 		for i, cc := range cfg.Companions {
-			byName[cc.Name] = i
+			byID[cc.ID] = i
 		}
-		for _, comp := range b.companions {
-			i, ok := byName[comp.Name()]
+		for _, comp := range companions {
+			i, ok := byID[comp.ID()]
 			if !ok {
+				if strict {
+					werr = fmt.Errorf("companion %q is no longer configured", comp.Name())
+					return
+				}
 				continue
 			}
 			if channels := comp.StandaloneChannels(); len(channels) > 0 {
@@ -359,7 +370,7 @@ func (b *backend) PersistChannels(ctx context.Context) error {
 				cfg.Companions[i].Channels = nil
 			}
 		}
-		werr = writeConfigToTables(ctx, b.db, cfg)
+		werr = writeConfigToTables(ctx, db, cfg)
 	})
 	if werr != nil {
 		return werr

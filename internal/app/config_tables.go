@@ -168,11 +168,13 @@ func assembleFromRows(rows *configRows) *config.Config {
 			TelemetryLocation:    emptyToNil(c.TelemLoc),
 			TelemetryEnvironment: emptyToNil(c.TelemEnv),
 			FloodScope:           config.FloodScope(c.FloodScope),
+			App:                  config.AppAccess{Enabled: c.AppEnabled, Port: c.AppPort},
+			ShareLocation:        &c.ShareLocation,
 		}
 		if chs := chansByComp[c.ID]; len(chs) > 0 {
 			list := make(config.ChannelList, 0, len(chs))
 			for _, ch := range chs {
-				list = append(list, config.ChannelRef{Name: ch.Name, PrivateKey: ch.PrivateKey, FloodScope: config.FloodScope(ch.FloodScope)})
+				list = append(list, config.ChannelRef{Name: ch.Name, PrivateKey: ch.PrivateKey, FloodScope: config.FloodScope(ch.FloodScope), Slot: ch.Slot})
 			}
 			comp.Channels = &list
 		}
@@ -365,7 +367,10 @@ func writeConfigToTables(ctx context.Context, st *store.Store, cfg *config.Confi
 			TelemLoc:  config.TelemetryModeOrDefault(cc.TelemetryLocation),
 			TelemEnv:  config.TelemetryModeOrDefault(cc.TelemetryEnvironment),
 
-			FloodScope: string(cc.FloodScope),
+			FloodScope:    string(cc.FloodScope),
+			AppEnabled:    cc.App.Enabled,
+			AppPort:       cc.App.Port,
+			ShareLocation: cc.SharesLocation(),
 		}
 		if prev, ok := byName[cc.Name]; ok {
 			row.ID = prev.ID
@@ -449,12 +454,18 @@ func replaceCompanionChildren(ctx context.Context, st *store.Store, companionID 
 
 	chanID := make(map[string]int64)
 	if cc.Channels != nil {
-		for _, ch := range *cc.Channels {
-			cr := store.CompanionChannel{CompanionID: companionID, Name: ch.Name, PrivateKey: ch.PrivateKey, FloodScope: string(ch.FloodScope)}
-			if err := st.Channels.Create(ctx, &cr); err != nil {
-				return err
+		// Channels with a slot first, so one without cannot take it.
+		for _, pass := range []bool{true, false} {
+			for _, ch := range *cc.Channels {
+				if (ch.Slot != nil) != pass {
+					continue
+				}
+				cr := store.CompanionChannel{CompanionID: companionID, Name: ch.Name, PrivateKey: ch.PrivateKey, FloodScope: string(ch.FloodScope), Slot: ch.Slot}
+				if err := st.Channels.Create(ctx, &cr); err != nil {
+					return err
+				}
+				chanID[ch.Name] = cr.ID
 			}
-			chanID[ch.Name] = cr.ID
 		}
 	}
 

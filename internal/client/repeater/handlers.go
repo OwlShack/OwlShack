@@ -94,28 +94,15 @@ func (rm *Client) HandlePathPacket(pkt *meshcore.Packet) bool {
 		pathHashSize := int(pp.PathHashSize())
 
 		rm.log.Debug("path return received (session)", "hops", pp.PathHashCount(), "hashSize", pathHashSize, "pathHex", hex.EncodeToString(returnPath))
-		if pubkeyBytes, derr := hex.DecodeString(sess.PubKeyHex); derr == nil && len(pubkeyBytes) == 32 {
+		target := rm.pendingFor(extraType, extraData)
+		if pubkeyBytes, derr := hex.DecodeString(sess.PubKeyHex); derr == nil && len(pubkeyBytes) == 32 && (target == nil || !target.discovery) {
 			var pubkey [32]byte
 			copy(pubkey[:], pubkeyBytes)
 			rm.node.Peers().SetOutPath(pubkey, returnPath, uint8(pathHashSize))
 			rm.persistOutPath(pubkeyBytes, returnPath, uint8(pathHashSize))
 			rm.sendReciprocalPath(pkt, pubkeyBytes, sess.sharedSecret, returnPath, uint8(pathHashSize))
 		}
-
-		if extraType == meshcore.PayloadTypeResponse && len(extraData) >= 4 {
-			tag := binary.LittleEndian.Uint32(extraData[:4])
-			data := extraData[4:]
-
-			rm.pendingMu.Lock()
-			pr, ok := rm.pending[tag]
-			rm.pendingMu.Unlock()
-			if ok {
-				select {
-				case pr.ch <- data:
-				default:
-				}
-			}
-		}
+		deliverPathReply(target, pkt, pp)
 		return true
 	}
 
@@ -140,29 +127,41 @@ func (rm *Client) HandlePathPacket(pkt *meshcore.Packet) bool {
 		if err != nil {
 			return true
 		}
-		returnPath, extraType, extraData := pp.Path, pp.ExtraType, pp.Extra
-
-		rm.node.Peers().SetOutPath(pr.peerPubKey, returnPath, pp.PathHashSize())
-		rm.persistOutPath(pr.peerPubKey[:], returnPath, pp.PathHashSize())
-		rm.sendReciprocalPath(pkt, pr.peerPubKey[:], pr.sharedSecret, returnPath, pp.PathHashSize())
-
-		if extraType == meshcore.PayloadTypeResponse && len(extraData) >= 4 {
-			tag := binary.LittleEndian.Uint32(extraData[:4])
-			data := extraData[4:]
-
-			rm.pendingMu.Lock()
-			target, ok := rm.pending[tag]
-			rm.pendingMu.Unlock()
-			if ok {
-				select {
-				case target.ch <- data:
-				default:
-				}
-			}
+		returnPath := pp.Path
+		target := rm.pendingFor(pp.ExtraType, pp.Extra)
+		if target == nil || !target.discovery {
+			rm.node.Peers().SetOutPath(pr.peerPubKey, returnPath, pp.PathHashSize())
+			rm.persistOutPath(pr.peerPubKey[:], returnPath, pp.PathHashSize())
+			rm.sendReciprocalPath(pkt, pr.peerPubKey[:], pr.sharedSecret, returnPath, pp.PathHashSize())
 		}
+		deliverPathReply(target, pkt, pp)
 		return true
 	}
 	return false
+}
+
+// pendingFor is the request a PATH packet's embedded response answers, or nil.
+func (rm *Client) pendingFor(extraType byte, extra []byte) *pendingRequest {
+	if extraType != meshcore.PayloadTypeResponse || len(extra) < 4 {
+		return nil
+	}
+	rm.pendingMu.Lock()
+	defer rm.pendingMu.Unlock()
+	return rm.pending[binary.LittleEndian.Uint32(extra[:4])]
+}
+
+// deliverPathReply hands target the response after its tag, and a discovery both paths first.
+func deliverPathReply(target *pendingRequest, pkt *meshcore.Packet, pp *meshcore.PathPayload) {
+	if target == nil {
+		return
+	}
+	if target.onPath != nil {
+		target.onPath(PathBytes{Len: pp.PathLength, Hops: pp.Path}, PathBytes{Len: pkt.PathLength, Hops: pkt.Path})
+	}
+	select {
+	case target.ch <- pp.Extra[4:]:
+	default:
+	}
 }
 
 func (rm *Client) HandleResponsePacket(pkt *meshcore.Packet) {

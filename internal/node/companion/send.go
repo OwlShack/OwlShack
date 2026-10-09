@@ -36,18 +36,19 @@ func (c *Companion) SendChannelMessage(channelName, text string) error {
 
 // sendGroupReply is the shared send path for the chat API and trigger replies, so bot replies are persisted, broadcast and echo-tracked like manual sends.
 func (c *Companion) sendGroupReply(ch *meshcore.ChannelEntry, text string, hashSize uint8, retryTimeout time.Duration, maxRetries int, scope config.FloodScope) error {
+	name := c.conf().Name
 	payload := &meshcore.GroupTextPayload{
 		Timestamp: c.uniqueTimestamp(),
-		Sender:    c.cfg.Name,
+		Sender:    name,
 		Text:      text,
 	}
 
 	now := time.Now()
 	msg := &store.Message{
-		CompanionID: c.cfg.ID,
+		CompanionID: c.conf().ID,
 		Channel:     ch.Name,
 		ChannelHash: ch.Hash,
-		Sender:      c.cfg.Name,
+		Sender:      name,
 		Text:        text,
 		Direction:   "tx",
 		Timestamp:   now,
@@ -65,10 +66,10 @@ func (c *Companion) sendGroupReply(ch *meshcore.ChannelEntry, text string, hashS
 
 	if c.hub != nil {
 		c.hub.Broadcast("messages", map[string]any{
-			"companion":   c.cfg.Name,
-			"companionId": c.cfg.ID,
+			"companion":   name,
+			"companionId": c.conf().ID,
 			"channel":     ch.Name,
-			"sender":      c.cfg.Name,
+			"sender":      name,
 			"text":        text,
 			"direction":   "tx",
 			"timestamp":   msg.Timestamp.UTC().Format(time.RFC3339),
@@ -110,8 +111,8 @@ func (c *Companion) setMessageStatus(msgID int64, channel, status string) {
 	if c.hub != nil {
 		c.hub.Broadcast("messages", map[string]any{
 			"action":      "status",
-			"companion":   c.cfg.Name,
-			"companionId": c.cfg.ID,
+			"companion":   c.conf().Name,
+			"companionId": c.conf().ID,
 			"channel":     channel,
 			"id":          msgID,
 			"status":      status,
@@ -121,12 +122,14 @@ func (c *Companion) setMessageStatus(msgID int64, channel, status string) {
 
 // SendContactMessage is the chat API's DM send: a flood or 0-hop DM goes out at the contact's bytes per hop.
 func (c *Companion) SendContactMessage(pubkeyHex, text string) error {
-	return c.sendDM(pubkeyHex, text, c.bytesPerHopHex(pubkeyHex), 5*time.Second, c.contactScopeHex(pubkeyHex))
+	_, err := c.sendDM(pubkeyHex, text, c.bytesPerHopHex(pubkeyHex), 5*time.Second, c.contactScopeHex(pubkeyHex), nil)
+	return err
 }
 
 // sendDMReply is a DM trigger's answer: the trigger's pathHashSize frames it only when no route is stored, since a stored path already fixes its own hash width.
 func (c *Companion) sendDMReply(pubkeyHex, text string, hashSize uint8, ackTimeout time.Duration, scope config.FloodScope) error {
-	return c.sendDM(pubkeyHex, text, hashSize, ackTimeout, scope)
+	_, err := c.sendDM(pubkeyHex, text, hashSize, ackTimeout, scope, nil)
+	return err
 }
 
 // dmAckTimeout mirrors the firmware's calcFloodTimeoutMillisFor / calcDirectTimeoutMillisFor
@@ -161,20 +164,21 @@ func (c *Companion) dmAckTimeout(textLen int, outPath []byte, hashSize uint8, fl
 	return max(timeout, floor)
 }
 
-func (c *Companion) sendDM(pubkeyHex, text string, fallbackHashSize uint8, ackTimeout time.Duration, scope config.FloodScope) error {
+// sendDM stores, shows and sends a DM; done, when set, also hears the outcome.
+func (c *Companion) sendDM(pubkeyHex, text string, fallbackHashSize uint8, ackTimeout time.Duration, scope config.FloodScope, done func(node.DMSendResult)) (AppDMSend, error) {
 	pubkeyBytes, err := hex.DecodeString(pubkeyHex)
 	if err != nil {
-		return fmt.Errorf("invalid pubkey hex: %w", err)
+		return AppDMSend{}, fmt.Errorf("invalid pubkey hex: %w", err)
 	}
 
 	peerIdentity, err := meshcore.NewIdentityFromBytes(pubkeyBytes)
 	if err != nil {
-		return fmt.Errorf("invalid pubkey: %w", err)
+		return AppDMSend{}, fmt.Errorf("invalid pubkey: %w", err)
 	}
 
 	// The UI counts characters; the wire counts bytes, and a retry past attempt 3 appends 2 more.
 	if len(text) > MaxDMTextBytes {
-		return fmt.Errorf("%w: message is %d bytes, over the %d-byte limit (multibyte characters cost more than one)", node.ErrTextTooLong, len(text), MaxDMTextBytes)
+		return AppDMSend{}, fmt.Errorf("%w: message is %d bytes, over the %d-byte limit (multibyte characters cost more than one)", node.ErrTextTooLong, len(text), MaxDMTextBytes)
 	}
 
 	// SendTextMessage treats a nil path as a flood, so an unrouted contact still sends.
@@ -194,10 +198,10 @@ func (c *Companion) sendDM(pubkeyHex, text string, fallbackHashSize uint8, ackTi
 
 	now := time.Now()
 	msg := &store.Message{
-		CompanionID: c.cfg.ID,
+		CompanionID: c.conf().ID,
 		Channel:     channelKey,
 		ChannelHash: 0,
-		Sender:      c.cfg.Name,
+		Sender:      c.conf().Name,
 		Text:        text,
 		Direction:   "tx",
 		Timestamp:   now,
@@ -214,10 +218,10 @@ func (c *Companion) sendDM(pubkeyHex, text string, fallbackHashSize uint8, ackTi
 
 	if c.hub != nil {
 		c.hub.Broadcast("messages", map[string]any{
-			"companion":   c.cfg.Name,
-			"companionId": c.cfg.ID,
+			"companion":   c.conf().Name,
+			"companionId": c.conf().ID,
 			"channel":     channelKey,
-			"sender":      c.cfg.Name,
+			"sender":      c.conf().Name,
 			"text":        text,
 			"direction":   "tx",
 			"timestamp":   msg.Timestamp.UTC().Format(time.RFC3339),
@@ -251,7 +255,7 @@ func (c *Companion) sendDM(pubkeyHex, text string, fallbackHashSize uint8, ackTi
 				if haveRoute {
 					c.node.Peers().ResetOutPath(peerIdentity.PublicKey())
 					c.store.WriteAsync(func() {
-						if err := c.store.Contacts.UpdateOutPath(context.Background(), c.cfg.ID, pubkeyBytes, nil, 0); err != nil {
+						if err := c.store.Contacts.UpdateOutPath(context.Background(), c.conf().ID, pubkeyBytes, nil, 0); err != nil {
 							c.log.Error("failed to clear stale route", "peer", pubkeyHex[:12], "error", err)
 						}
 					})
@@ -260,12 +264,21 @@ func (c *Companion) sendDM(pubkeyHex, text string, fallbackHashSize uint8, ackTi
 			}
 
 			c.setMessageStatus(msgID, channelKey, status)
+			if done != nil {
+				done(result)
+			}
 		},
 	)
 	if err != nil { // the library reports no result for a send it refused outright
 		c.setMessageStatus(msgID, channelKey, "failed")
+		return AppDMSend{}, err
 	}
-	return err
+	// The library makes 4 flood attempts, or 6 starting direct, each waiting ackTimeout.
+	attempts := 4
+	if outPath != nil {
+		attempts = 6
+	}
+	return AppDMSend{Flood: outPath == nil, Timeout: ackTimeout * time.Duration(attempts)}, nil
 }
 
 func (c *Companion) SendTrace(path []byte, pathHashSize uint8) (uint32, error) {

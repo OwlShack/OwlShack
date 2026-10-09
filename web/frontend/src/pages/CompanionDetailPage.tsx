@@ -47,6 +47,7 @@ import {
   RotateCw,
   Search,
   Send,
+  Smartphone,
   Trash2,
   UserPlus,
   Users,
@@ -306,6 +307,7 @@ const COMPANION_NAV = [
   { seg: "channels", label: "channels", Icon: Hash },
   { seg: "repeaters", label: "repeaters", Icon: Radio },
   { seg: "telemetry", label: "telemetry", Icon: Activity },
+  { seg: "app", label: "app access", Icon: Smartphone },
 ] as const;
 
 type AdvertMode = "flood" | "zerohop";

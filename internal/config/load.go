@@ -182,6 +182,7 @@ func (c *Config) Validate() error {
 	// A startCompanions failure after a reload exits the process, so anything that would fail companion construction must be rejected here.
 	seen := make(map[string]bool, len(c.Companions))
 	seenKeys := make(map[string]string, len(c.Companions))
+	appPorts := make(map[int]string, len(c.Companions))
 	for i, comp := range c.Companions {
 		if comp.Name == "" {
 			return fmt.Errorf("companion[%d]: name is required", i)
@@ -206,6 +207,15 @@ func (c *Config) Validate() error {
 		if err := comp.FloodScope.Validate(true); err != nil {
 			return fmt.Errorf("companion %q floodScope: %w", comp.Name, err)
 		}
+		if p := comp.App.Port; (comp.App.Enabled || p != 0) && (p < AppPortFirst || p > AppPortLast) {
+			return fmt.Errorf("companion %q: the app port must be %d-%d", comp.Name, AppPortFirst, AppPortLast)
+		}
+		if comp.App.Enabled {
+			if other, dup := appPorts[comp.App.Port]; dup {
+				return fmt.Errorf("companions %q and %q both let the app in on port %d", other, comp.Name, comp.App.Port)
+			}
+			appPorts[comp.App.Port] = comp.Name
+		}
 		switch comp.DMPolicyOrDefault() {
 		case DMPolicyContacts, DMPolicyAllowlist, DMPolicyAnyone:
 		default:
@@ -227,10 +237,22 @@ func (c *Config) Validate() error {
 		}
 		// Standalone channels too: a bad key still fails companion construction.
 		if comp.Channels != nil {
+			slots := map[int]string{}
 			for j, ch := range *comp.Channels {
 				if err := ch.Validate(); err != nil {
 					return fmt.Errorf("companion %q channel[%d] %q: %w", comp.Name, j, ch.Name, err)
 				}
+				if ch.Slot == nil {
+					continue
+				}
+				// One past the node's table is skipped, not refused: a database that loaded before must still load.
+				if *ch.Slot < 0 {
+					return fmt.Errorf("companion %q channel %q: slot %d is negative", comp.Name, ch.Name, *ch.Slot)
+				}
+				if other, dup := slots[*ch.Slot]; dup {
+					return fmt.Errorf("companion %q: channels %q and %q are both in slot %d", comp.Name, other, ch.Name, *ch.Slot)
+				}
+				slots[*ch.Slot] = ch.Name
 			}
 		}
 	}

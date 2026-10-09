@@ -26,7 +26,7 @@ import { RegionSelect, useRegionSettings } from "@/components/RegionSelect";
 import { LoadErrorAlert } from "@/components/LoadErrorAlert";
 import { PageHeader } from "@/components/PageHeader";
 import { InlineConfirm } from "@/components/InlineConfirm";
-import { PATH_HASH_SIZE_OPTIONS, SelectField, TextField } from "@/components/ConfigFields";
+import { PATH_HASH_SIZE_OPTIONS, SelectField, SwitchRow, TextField } from "@/components/ConfigFields";
 import { PositionPicker, round6 } from "@/components/PositionPicker";
 import { PeerListField, type PickablePeer } from "@/components/PeerPicker";
 import { truncateMid } from "@/lib/format";
@@ -264,6 +264,7 @@ function CompanionEditor({
     companion?.pathHashSize != null ? String(companion.pathHashSize) : "",
   );
   const [floodScope, setFloodScope] = useState<FloodScope>(companion?.floodScope ?? "inherit");
+  const [shareLocation, setShareLocation] = useState(companion?.shareLocation ?? true);
   const regionSettings = useRegionSettings();
   const [advertInterval, setAdvertInterval] = useState(
     companion?.advertInterval != null ? String(companion.advertInterval) : "",
@@ -294,6 +295,7 @@ function CompanionEditor({
           dmPolicy,
           dmAllow: dmAllow.map((k) => k.trim()).filter(Boolean),
           floodScope,
+          shareLocation,
         },
         companion?.id,
       );
@@ -373,6 +375,12 @@ function CompanionEditor({
               setLatitude(round6(la));
               setLongitude(round6(lo));
             }}
+          />
+          <SwitchRow
+            label="Share position in adverts"
+            hint="Off sends adverts without it; the position stays saved here. Telemetry has its own position setting."
+            checked={shareLocation}
+            onChange={setShareLocation}
           />
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <TextField

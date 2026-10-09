@@ -15,6 +15,21 @@ import (
 )
 
 func (c *Companion) AddChannel(ref config.ChannelRef) error {
+	c.chanEditMu.Lock()
+	defer c.chanEditMu.Unlock()
+	return c.addChannel(ref, -1)
+}
+
+// ownScope is a channel's own region, unset read as inherit, as it is saved.
+func ownScope(s config.FloodScope) config.FloodScope {
+	if s == "" {
+		return config.ScopeInherit
+	}
+	return s
+}
+
+// addChannel puts the channel in slot, or the first free one when slot is -1.
+func (c *Companion) addChannel(ref config.ChannelRef, slot int) error {
 	if err := config.CheckChannelName(ref.Name); err != nil {
 		return api.Invalid(err)
 	}
@@ -32,7 +47,10 @@ func (c *Companion) AddChannel(ref config.ChannelRef) error {
 		}
 	}
 
-	idx := c.nextFreeChannelIndex()
+	idx := slot
+	if idx < 0 {
+		idx = c.nextFreeChannelIndex()
+	}
 	if idx < 0 {
 		return fmt.Errorf("no free channel slots")
 	}
@@ -41,7 +59,7 @@ func (c *Companion) AddChannel(ref config.ChannelRef) error {
 		return fmt.Errorf("failed to set channel at index %d", idx)
 	}
 	c.chanScopesMu.Lock()
-	c.chanScopes[ch.Name] = ref.FloodScope
+	c.chanScopes[ch.Name] = ownScope(ref.FloodScope)
 	c.chanScopesMu.Unlock()
 
 	c.log.Info("channel added", "channel", ch.Name, "index", idx)
@@ -49,6 +67,12 @@ func (c *Companion) AddChannel(ref config.ChannelRef) error {
 }
 
 func (c *Companion) RemoveChannel(name string) error {
+	c.chanEditMu.Lock()
+	defer c.chanEditMu.Unlock()
+	return c.removeChannel(name)
+}
+
+func (c *Companion) removeChannel(name string) error {
 	if used := c.channelTriggerUsage(name); used != "" {
 		return fmt.Errorf("channel %q is in use by the %s; remove that trigger usage first", name, used)
 	}
@@ -67,6 +91,12 @@ func (c *Companion) RemoveChannel(name string) error {
 }
 
 func (c *Companion) RenameChannel(oldName, newName string) error {
+	c.chanEditMu.Lock()
+	defer c.chanEditMu.Unlock()
+	return c.renameChannel(oldName, newName)
+}
+
+func (c *Companion) renameChannel(oldName, newName string) error {
 	if oldName == newName {
 		return nil // a save with nothing changed; the scope swap below would delete the scope
 	}
@@ -127,15 +157,16 @@ func (c *Companion) nextFreeChannelIndex() int {
 
 // StandaloneChannels returns every channel registered on the node for config persistence; hashtag/Public channels omit their derived key.
 func (c *Companion) StandaloneChannels() []config.ChannelRef {
-	allChs := c.node.Channels()
 	c.chanScopesMu.Lock()
 	defer c.chanScopesMu.Unlock()
 	var refs []config.ChannelRef
-	for _, ch := range allChs {
+	for i := range node.DefaultMaxChannels {
+		ch := c.node.Channel(i)
 		if ch == nil {
 			continue
 		}
-		ref := config.ChannelRef{Name: ch.Name, FloodScope: c.chanScopes[ch.Name]}
+		slot := i
+		ref := config.ChannelRef{Name: ch.Name, FloodScope: c.chanScopes[ch.Name], Slot: &slot}
 		if !isHashtagChannel(ch) {
 			ref.PrivateKey = hex.EncodeToString(ch.PSK[:])
 		}

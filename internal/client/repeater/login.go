@@ -16,18 +16,25 @@ type LoginResult struct {
 	IsAdmin     bool   `json:"isAdmin"`
 	Permissions int    `json:"permissions"`
 	Role        string `json:"role,omitempty"`
+	// Reply is the server's answer, its tag first, for the MeshCore app's login push.
+	Reply []byte `json:"-"`
 }
 
 func (rm *Client) SendLogin(pubkeyHex, password string, timeout time.Duration) (*LoginResult, error) {
-	return rm.sendLogin(pubkeyHex, password, nil, timeout)
+	return rm.sendLogin(pubkeyHex, password, nil, timeout, nil)
 }
 
 // SendRoomLogin is SendLogin plus a sync_since cursor; the server pushes posts newer than it.
 func (rm *Client) SendRoomLogin(pubkeyHex, password string, syncSince uint32, timeout time.Duration) (*LoginResult, error) {
-	return rm.sendLogin(pubkeyHex, password, &syncSince, timeout)
+	return rm.sendLogin(pubkeyHex, password, &syncSince, timeout, nil)
 }
 
-func (rm *Client) sendLogin(pubkeyHex, password string, roomSyncSince *uint32, timeout time.Duration) (*LoginResult, error) {
+// AppLogin is the MeshCore app's login, a room's with syncSince set; sent hears the wait and whether it flooded once it is on its way.
+func (rm *Client) AppLogin(pubkeyHex, password string, syncSince *uint32, timeout time.Duration, sent func(wait time.Duration, flood bool)) (*LoginResult, error) {
+	return rm.sendLogin(pubkeyHex, password, syncSince, timeout, sent)
+}
+
+func (rm *Client) sendLogin(pubkeyHex, password string, roomSyncSince *uint32, timeout time.Duration, sent func(time.Duration, bool)) (*LoginResult, error) {
 	pubkeyBytes, err := hex.DecodeString(pubkeyHex)
 	if err != nil {
 		return nil, fmt.Errorf("%w: hex: %w", ErrBadPubkey, err)
@@ -116,6 +123,9 @@ func (rm *Client) sendLogin(pubkeyHex, password string, roomSyncSince *uint32, t
 
 	wait := rm.replyTimeout(len(payload), outPath, hashSize, timeout)
 	rm.log.Debug("login sent", "peer", pubkeyHex[:12], "wait", wait)
+	if sent != nil {
+		sent(wait, outPath == nil)
+	}
 
 	select {
 	case data := <-resultCh:
@@ -146,7 +156,7 @@ func (rm *Client) sendLogin(pubkeyHex, password string, roomSyncSince *uint32, t
 			localPubKey:  selfIdentity.PublicKey(),
 		}
 		rm.mu.Unlock()
-		return &LoginResult{Success: true, IsAdmin: isAdmin, Permissions: perms, Role: role}, nil
+		return &LoginResult{Success: true, IsAdmin: isAdmin, Permissions: perms, Role: role, Reply: data}, nil
 	case <-time.After(wait):
 		// A login that times out on a route drops it so the retry floods, as the firmware's path discovery does (companion MyMesh.cpp:1613-1616); a lost mid-session reply does not.
 		if outPath != nil {

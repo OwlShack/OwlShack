@@ -222,7 +222,7 @@ func TestSaves_MissingIDIsNotFound(t *testing.T) {
 	deny := config.TelemetryDeny
 	for name, save := range map[string]func() error{
 		"companion": func() error {
-			_, err := b.SaveCompanion(ctx, api.CompanionInput{ID: 9999, Name: "x", FloodScope: "inherit"})
+			_, err := b.SaveCompanion(ctx, api.CompanionInput{ID: 9999, Name: "x", FloodScope: "inherit", ShareLocation: &share})
 			return err
 		},
 		"bot": func() error {

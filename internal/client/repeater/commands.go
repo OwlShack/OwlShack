@@ -191,6 +191,51 @@ func (rm *Client) SendTelemetryReq(pubkeyHex string, timeout time.Duration) (*te
 
 // SendContactTelemetryReq needs no login: it encrypts with the ECDH secret shared with the contact.
 func (rm *Client) SendContactTelemetryReq(pubkeyHex string, timeout time.Duration) (*telemetry.Telemetry, error) {
+	body, err := telemetryReqBody()
+	if err != nil {
+		return nil, err
+	}
+	data, err := rm.contactRequest(pubkeyHex, body, timeout, "contact-telemetry", &pendingRequest{})
+	if err != nil {
+		return nil, err
+	}
+	return badReply(telemetry.Parse(data))
+}
+
+// AppRequest sends the MeshCore app's request body as its firmware does, under the contact's own shared secret, and returns the reply after its tag.
+func (rm *Client) AppRequest(pubkeyHex string, body []byte, timeout time.Duration, sent func(tag uint32, wait time.Duration, flood bool)) ([]byte, error) {
+	return rm.contactRequest(pubkeyHex, body, timeout, "app", &pendingRequest{onSent: sent})
+}
+
+// AppPathDiscovery is the app's path discovery: a flooded base-telemetry request whose reply brings back both paths and leaves the stored route alone.
+func (rm *Client) AppPathDiscovery(pubkeyHex string, timeout time.Duration, sent func(tag uint32, wait time.Duration, flood bool)) (out, in PathBytes, err error) {
+	body, err := telemetryReqBody()
+	if err != nil {
+		return out, in, err
+	}
+	body[1] = ^meshcore.TelemPermBase
+	paths := make(chan [2]PathBytes, 1)
+	pr := &pendingRequest{onSent: sent, discovery: true, onPath: func(o, i PathBytes) {
+		select {
+		case paths <- [2]PathBytes{o, i}: // a repeat of the return finds it full and is dropped, never blocking RX
+		default:
+		}
+	}}
+	if _, err = rm.contactRequest(pubkeyHex, body, timeout, "path-discovery", pr); err != nil {
+		return out, in, err
+	}
+	select {
+	case p := <-paths:
+		return p[0], p[1], nil
+	default:
+		return out, in, ErrNoPath
+	}
+}
+
+// ErrNoPath is a path discovery answered without the path return that carries both routes.
+var ErrNoPath = errors.New("the node answered without a path return, so no route was learned")
+
+func (rm *Client) contactRequest(pubkeyHex string, body []byte, timeout time.Duration, label string, pr *pendingRequest) ([]byte, error) {
 	pubkeyBytes, err := hex.DecodeString(pubkeyHex)
 	if err != nil {
 		return nil, fmt.Errorf("%w: hex: %w", ErrBadPubkey, err)
@@ -203,22 +248,12 @@ func (rm *Client) SendContactTelemetryReq(pubkeyHex string, timeout time.Duratio
 	if peer == nil {
 		return nil, ErrUnknownPeer
 	}
-
-	self := rm.node.Identity()
 	sharedSecret, err := rm.node.SharedSecret(peerIdentity)
 	if err != nil {
 		return nil, fmt.Errorf("deriving shared secret: %w", err)
 	}
-
-	body, err := telemetryReqBody()
-	if err != nil {
-		return nil, err
-	}
-	data, err := rm.roundtripRequest(peerIdentity.PublicKey(), peer, sharedSecret, self.PublicKey()[0], body, timeout, "contact-telemetry", true)
-	if err != nil {
-		return nil, err
-	}
-	return badReply(telemetry.Parse(data))
+	pr.sharedSecret, pr.peerPubKey = sharedSecret, peerIdentity.PublicKey()
+	return rm.roundtripRequest(peerIdentity.PublicKey(), peer, sharedSecret, rm.node.Identity().PublicKey()[0], body, timeout, label, pr)
 }
 
 // ErrRegionLoad: the firmware reads load-mode lines before stripping our "XX|" tag, so none parse and it swallows every later command until rebooted.

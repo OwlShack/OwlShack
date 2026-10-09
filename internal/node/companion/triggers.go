@@ -20,7 +20,7 @@ func (c *Companion) ReloadTriggers(newCfg config.CompanionConfig) error {
 
 	ctx := c.runCtx
 	if ctx == nil {
-		return fmt.Errorf("companion %q not started", c.cfg.Name)
+		return fmt.Errorf("companion %q not started", c.conf().Name)
 	}
 
 	// Channels are unchanged here: a config change that alters them takes the full-restart path.
@@ -33,10 +33,12 @@ func (c *Companion) ReloadTriggers(newCfg config.CompanionConfig) error {
 		e.trigger.Stop()
 	}
 	c.triggers = newEntries
-	c.cfg.Triggers = newCfg.Triggers
+	next := *c.conf()
+	next.Triggers = newCfg.Triggers
+	c.live.Store(&next)
 	for _, e := range c.triggers {
 		if err := e.trigger.Start(ctx, c.makeCallback(ctx, e)); err != nil {
-			return fmt.Errorf("companion %q starting reloaded trigger (%s): %w", c.cfg.Name, e.config.Type, err)
+			return fmt.Errorf("companion %q starting reloaded trigger (%s): %w", c.conf().Name, e.config.Type, err)
 		}
 	}
 
@@ -80,11 +82,11 @@ func (c *Companion) buildTriggers(cfg config.CompanionConfig) ([]triggerEntry, e
 		applyTriggerDefaults(&trigCfg)
 		channels, err := triggerChannelFilters(trigCfg)
 		if err != nil {
-			return nil, fmt.Errorf("companion %q: %w", c.cfg.Name, err)
+			return nil, fmt.Errorf("companion %q: %w", c.conf().Name, err)
 		}
 		entry, err := c.buildTrigger(trigCfg, channels)
 		if err != nil {
-			return nil, fmt.Errorf("companion %q trigger %q: %w", c.cfg.Name, trigCfg.Type, err)
+			return nil, fmt.Errorf("companion %q trigger %q: %w", c.conf().Name, trigCfg.Type, err)
 		}
 		entries = append(entries, *entry)
 	}
@@ -97,15 +99,15 @@ func (c *Companion) buildTrigger(cfg config.TriggerConfig, channels []*meshcore.
 
 	switch cfg.Type {
 	case "channel", "group":
-		t, err = trigger.NewChannelTrigger(c.cfg.Name, cfg, c.node, channels, c.log)
+		t, err = trigger.NewChannelTrigger(c.conf().Name, cfg, c.node, channels, c.log)
 	case "dm":
-		t, err = trigger.NewDMTrigger(c.cfg.Name, cfg, c.log)
+		t, err = trigger.NewDMTrigger(c.conf().Name, cfg, c.log)
 	case "cron":
-		t, err = trigger.NewCronTrigger(c.cfg.Name, cfg, c.log)
+		t, err = trigger.NewCronTrigger(c.conf().Name, cfg, c.log)
 	case "rss":
-		t, err = trigger.NewRSSTrigger(c.cfg.Name, cfg, c.log)
+		t, err = trigger.NewRSSTrigger(c.conf().Name, cfg, c.log)
 	case "cap":
-		t, err = trigger.NewCAPTrigger(c.cfg.Name, cfg, c.log)
+		t, err = trigger.NewCAPTrigger(c.conf().Name, cfg, c.log)
 	default:
 		return nil, fmt.Errorf("unknown trigger type %q", cfg.Type)
 	}

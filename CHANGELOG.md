@@ -7,6 +7,20 @@ top until tagged.
 
 ### Added
 
+- **Use the official MeshCore app with a companion.** On a companion's App page, turn on app
+  access and connect the app over TCP to that port. Chat, contacts, channels, and logging in to
+  repeaters and rooms all work from the app, and what you send shows here too. The app has no
+  password, so anyone who can reach the port can read the companion's messages and send as it:
+  turn it on only on a network you trust. From the app you can rename the companion, move it, set
+  who may read its telemetry, its region and path hash size, add and remove channels, and rename
+  or star contacts; the radio's settings stay OwlShack's to change.
+- **Star your favourite contacts.** Starred contacts are listed first. The star is the same one as
+  in the MeshCore app, so starring a contact in either shows in both.
+- **Keep a companion's position out of its adverts.** Edit companion has Share position in
+  adverts; turn it off and its adverts go out without the position. Telemetry has its own position
+  setting on the companion's telemetry page. The MeshCore app's share-position switch sets the
+  same thing as this one.
+
 - **Sensors wired to a KISS modem show on the Sensors page.** A BME280 or other sensor on the
   modem's board appears in Add sensor as a board sensor, one per channel the board reports. Once
   added it reads like a sensor wired to the Pi, and you can share it over the mesh from the channel
@@ -176,6 +190,8 @@ top until tagged.
   image name in your `docker run` command or compose file; the tags are the same. The Debian
   installer and the GitHub links still work through GitHub's redirect, but use the new addresses
   in the README.
+- **To use the MeshCore app with the Docker image, publish its ports.** Add
+  `-p 5000-5015:5000-5015` to your `docker run` command or compose file.
 
 ## v1.5.0 - 2026-10-01
 

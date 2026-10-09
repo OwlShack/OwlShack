@@ -61,7 +61,7 @@ func (c *Companion) sendDMAck(pkt *meshcore.Packet, senderPubKey []byte, sharedS
 
 // bytesPerHop is what everything sent to a node goes out at: its contact's setting, else the companion's own.
 func (c *Companion) bytesPerHop(pubkey []byte) uint8 {
-	if ct, err := c.store.Contacts.Get(c.runCtx, c.cfg.ID, pubkey); err == nil && ct != nil {
+	if ct, err := c.store.Contacts.Get(c.runCtx, c.conf().ID, pubkey); err == nil && ct != nil {
 		return ct.PathHashSize
 	}
 	return c.pathHashSize()
@@ -69,17 +69,17 @@ func (c *Companion) bytesPerHop(pubkey []byte) uint8 {
 
 // contactScope is the region floods to a node go in: its contact's, else the companion's own.
 func (c *Companion) contactScope(pubkey []byte) config.FloodScope {
-	if ct, err := c.store.Contacts.Get(c.runCtx, c.cfg.ID, pubkey); err == nil && ct != nil {
-		return config.ResolveScope(config.FloodScope(ct.FloodScope), c.cfg.FloodScope)
+	if ct, err := c.store.Contacts.Get(c.runCtx, c.conf().ID, pubkey); err == nil && ct != nil {
+		return config.ResolveScope(config.FloodScope(ct.FloodScope), c.conf().FloodScope)
 	}
-	return c.cfg.FloodScope
+	return c.conf().FloodScope
 }
 
 // contactScopeHex is contactScope for a hex pubkey; a bad one gets the companion's own, and the send then fails on it.
 func (c *Companion) contactScopeHex(pubkeyHex string) config.FloodScope {
 	pubkey, err := hex.DecodeString(pubkeyHex)
 	if err != nil {
-		return c.cfg.FloodScope
+		return c.conf().FloodScope
 	}
 	return c.contactScope(pubkey)
 }
@@ -89,7 +89,7 @@ func (c *Companion) channelScope(name string) config.FloodScope {
 	c.chanScopesMu.Lock()
 	own := c.chanScopes[name]
 	c.chanScopesMu.Unlock()
-	return config.ResolveScope(own, c.cfg.FloodScope)
+	return config.ResolveScope(own, c.conf().FloodScope)
 }
 
 // bytesPerHopHex is bytesPerHop for a hex pubkey; a bad one gets the companion's own, and the send then fails on it.
@@ -140,7 +140,7 @@ func (c *Companion) handleRoomPush(pkt *meshcore.Packet, roomPubKey []byte, room
 
 	// The server's backlog holds at most 32 posts, so 50 recent rows cover the resync window;
 	// this still catches a repost from before a restart, which the in-memory set has forgotten.
-	recent, err := c.store.Messages.List(c.runCtx, c.cfg.ID, channelKey, 50, 0)
+	recent, err := c.store.Messages.List(c.runCtx, c.conf().ID, channelKey, 50, 0)
 	if err == nil {
 		for _, m := range recent {
 			if m.Direction == "rx" && m.Timestamp.Unix() == int64(postTs) && m.Text == text {
@@ -149,6 +149,11 @@ func (c *Companion) handleRoomPush(pkt *meshcore.Packet, roomPubKey []byte, room
 			}
 		}
 	}
+	if a := c.app(); a != nil {
+		m := AppMessage{Channel: -1, TxtType: meshcore.TxtTypeSignedPlain, Timestamp: postTs, Signer: append([]byte(nil), authorPrefix...), Text: text, Packet: pkt}
+		copy(m.From[:], roomPubKey)
+		a.AppMessage(m)
+	}
 
 	authorName := hex.EncodeToString(authorPrefix) + "…"
 	if names, lookupErr := c.store.Peers.LookupByHash(c.runCtx, authorPrefix); lookupErr == nil && len(names) > 0 {
@@ -156,7 +161,7 @@ func (c *Companion) handleRoomPush(pkt *meshcore.Packet, roomPubKey []byte, room
 	}
 
 	msg := &store.Message{
-		CompanionID: c.cfg.ID,
+		CompanionID: c.conf().ID,
 		Channel:     channelKey,
 		ChannelHash: 0,
 		Sender:      authorName,
@@ -182,8 +187,8 @@ func (c *Companion) handleRoomPush(pkt *meshcore.Packet, roomPubKey []byte, room
 
 		if c.hub != nil {
 			wsMsg := map[string]any{
-				"companion":   c.cfg.Name,
-				"companionId": c.cfg.ID,
+				"companion":   c.conf().Name,
+				"companionId": c.conf().ID,
 				"channel":     channelKey,
 				"sender":      authorName,
 				"text":        text,
@@ -247,8 +252,14 @@ func (c *Companion) handleDMPathReturn(pkt *meshcore.Packet) {
 		hs := pp.PathHashSize()
 		peerPubKey := cand.pubkey
 		c.store.WriteAsync(func() {
-			if err := c.store.Contacts.UpdateOutPath(context.Background(), c.cfg.ID, peerPubKey, returnPath, hs); err != nil {
+			if err := c.store.Contacts.UpdateOutPath(context.Background(), c.conf().ID, peerPubKey, returnPath, hs); err != nil {
 				c.log.Error("failed to persist out_path", "error", err)
+				return
+			}
+			if a := c.app(); a != nil {
+				var k [32]byte
+				copy(k[:], peerPubKey)
+				a.AppPathUpdated(k)
 			}
 		})
 
@@ -275,7 +286,10 @@ func (c *Companion) registerPacketHandlers() {
 
 	radio.SetRawDataHandler(func(data []byte, snr float32, rssi int8, hasSignalInfo bool) {
 		if c.echoTracker != nil {
-			c.echoTracker.OnRawPacket(c.cfg.Name, data, snr, rssi, hasSignalInfo)
+			c.echoTracker.OnRawPacket(c.conf().Name, data, snr, rssi, hasSignalInfo)
+		}
+		if a := c.app(); a != nil {
+			a.AppRawRX(data, snr, rssi)
 		}
 	})
 
@@ -300,8 +314,8 @@ func (c *Companion) registerPacketHandlers() {
 		}
 		c.echoTracker.Track(pkt.PacketHash(), echo.Sent{
 			MessageID:   msgID,
-			CompanionID: c.cfg.ID,
-			Companion:   c.cfg.Name,
+			CompanionID: c.conf().ID,
+			Companion:   c.conf().Name,
 			Channel:     channel,
 		})
 	})
@@ -314,7 +328,7 @@ func (c *Companion) registerPacketHandlers() {
 			return
 		}
 
-		if payload.Sender == c.cfg.Name {
+		if payload.Sender == c.conf().Name {
 			return
 		}
 
@@ -343,7 +357,7 @@ func (c *Companion) registerPacketHandlers() {
 		pathHashSize := int(pkt.PathHashSize())
 
 		msg := &store.Message{
-			CompanionID:  c.cfg.ID,
+			CompanionID:  c.conf().ID,
 			Channel:      ch.Name,
 			ChannelHash:  ch.Hash,
 			Sender:       payload.Sender,
@@ -360,9 +374,12 @@ func (c *Companion) registerPacketHandlers() {
 		}
 
 		convoID := "channel:" + ch.Name
-		if blocked, err := c.store.BlockedSenders.IsBlocked(c.runCtx, c.cfg.ID, convoID, payload.Sender); err == nil && blocked {
+		if blocked, err := c.store.BlockedSenders.IsBlocked(c.runCtx, c.conf().ID, convoID, payload.Sender); err == nil && blocked {
 			c.log.Debug("blocked sender filtered", "sender", payload.Sender, "channel", ch.Name)
 			return
+		}
+		if a := c.app(); a != nil {
+			a.AppMessage(AppMessage{Channel: c.channelSlot(ch.Name), TxtType: meshcore.TxtTypePlain, Timestamp: payload.Timestamp, Text: channelText(payload.Sender, payload.Text), Packet: pkt})
 		}
 
 		c.store.WriteAsync(func() {
@@ -374,8 +391,8 @@ func (c *Companion) registerPacketHandlers() {
 			if c.echoTracker != nil && msg.ID != 0 {
 				c.echoTracker.Track(pkt.PacketHash(), echo.Sent{
 					MessageID:   msg.ID,
-					CompanionID: c.cfg.ID,
-					Companion:   c.cfg.Name,
+					CompanionID: c.conf().ID,
+					Companion:   c.conf().Name,
 					Channel:     ch.Name,
 				})
 			}
@@ -387,8 +404,8 @@ func (c *Companion) registerPacketHandlers() {
 
 			if c.hub != nil {
 				wsMsg := map[string]any{
-					"companion":    c.cfg.Name,
-					"companionId":  c.cfg.ID,
+					"companion":    c.conf().Name,
+					"companionId":  c.conf().ID,
 					"channel":      ch.Name,
 					"sender":       payload.Sender,
 					"text":         payload.Text,
@@ -497,8 +514,8 @@ func (c *Companion) registerPacketHandlers() {
 		}
 
 		// Gate before the ACK, so a sender the policy turns away sees a failed send rather than silence.
-		if !c.cfg.AllowsDMFrom(senderPubKeyHex, senderIsContact) {
-			c.log.Info("DM rejected", "from", senderName, "policy", c.cfg.DMPolicyOrDefault())
+		if !c.conf().AllowsDMFrom(senderPubKeyHex, senderIsContact) {
+			c.log.Info("DM rejected", "from", senderName, "policy", c.conf().DMPolicyOrDefault())
 			return
 		}
 
@@ -519,6 +536,11 @@ func (c *Companion) registerPacketHandlers() {
 			c.log.Debug("duplicate DM ignored", "from", senderName, "attempt", attemptByte)
 			return
 		}
+		if a := c.app(); a != nil {
+			m := AppMessage{Channel: -1, TxtType: meshcore.TxtTypePlain, Timestamp: binary.LittleEndian.Uint32(plaintext[:4]), Text: text, Packet: pkt}
+			copy(m.From[:], senderPubKey)
+			a.AppMessage(m)
+		}
 
 		channelKey := "dm:" + senderPubKeyHex
 
@@ -534,7 +556,7 @@ func (c *Companion) registerPacketHandlers() {
 
 		now := time.Now()
 		msg := &store.Message{
-			CompanionID:  c.cfg.ID,
+			CompanionID:  c.conf().ID,
 			Channel:      channelKey,
 			ChannelHash:  0,
 			Sender:       senderName,
@@ -563,8 +585,8 @@ func (c *Companion) registerPacketHandlers() {
 
 			if c.hub != nil {
 				wsMsg := map[string]any{
-					"companion":   c.cfg.Name,
-					"companionId": c.cfg.ID,
+					"companion":   c.conf().Name,
+					"companionId": c.conf().ID,
 					"channel":     channelKey,
 					"sender":      senderName,
 					"text":        text,
@@ -628,11 +650,14 @@ func (c *Companion) registerPacketHandlers() {
 			snrPtr = &snr
 		}
 		c.notifyTraceWaiter(tr.Tag, traceEcho{hops: hops, pathHex: pathHexes, hopSNRs: hopSNRs, snr: snrPtr})
+		if a := c.app(); a != nil {
+			a.AppTrace(pkt, tr)
+		}
 
 		if c.hub != nil {
 			wsMsg := map[string]any{
-				"companion":   c.cfg.Name,
-				"companionId": c.cfg.ID,
+				"companion":   c.conf().Name,
+				"companionId": c.conf().ID,
 				"tag":         tr.Tag,
 				"hops":        hops,
 				"path":        pathHexes,
@@ -656,6 +681,12 @@ func (c *Companion) registerPacketHandlers() {
 
 	c.node.OnPacket(meshcore.PayloadTypeReq, c.handleReq)
 
+	c.node.OnPacket(meshcore.PayloadTypeControl, func(pkt *meshcore.Packet) {
+		if a := c.app(); a != nil {
+			a.AppControl(pkt)
+		}
+	})
+
 	c.node.OnPacket(meshcore.PayloadTypePath, func(pkt *meshcore.Packet) {
 		if c.repeaters.HandlePathPacket(pkt) {
 			return
@@ -678,7 +709,7 @@ func (c *Companion) dmCandidates(source byte) []dmCandidate {
 	var out []dmCandidate
 	seen := make(map[string]bool)
 
-	contacts, err := c.store.Contacts.List(c.runCtx, c.cfg.ID)
+	contacts, err := c.store.Contacts.List(c.runCtx, c.conf().ID)
 	if err != nil {
 		c.log.Error("failed to list contacts for DM decryption", "error", err)
 	}
@@ -727,7 +758,7 @@ func (c *Companion) addDMSenderAsContact(pubkey []byte, name string) {
 
 	c.store.WriteAsync(func() {
 		ctx := context.Background()
-		if err := c.store.Contacts.Add(ctx, c.cfg.ID, pubkey, name, peerType); err != nil {
+		if err := c.store.Contacts.Add(ctx, c.conf().ID, pubkey, name, peerType); err != nil {
 			c.log.Error("failed to add DM sender as contact", "error", err)
 			return
 		}
@@ -876,6 +907,9 @@ func (c *Companion) handleAdvert(pkt *meshcore.Packet) {
 			p.Lat, p.Lon, p.Feat1, p.Feat2, p.LastSeen, p.LastAdvertTS, hasLoc,
 		); err != nil {
 			c.log.Error("failed to refresh contact from advert", "error", err)
+		}
+		if a := c.app(); a != nil && adv.PublicKey.PublicKey() != c.node.Identity().PublicKey() {
+			a.AppAdvert(adv.PublicKey.PublicKey())
 		}
 
 		c.log.Debug("peer persisted",

@@ -40,6 +40,7 @@ type Store struct {
 	LinkMonitors   *LinkMonitorRepo
 	Repeater       *RepeaterRepo
 	RepeaterACL    *RepeaterACLRepo
+	AppQueue       *AppQueueRepo
 
 	path       string
 	writerCh   chan func()
@@ -94,6 +95,7 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		LinkMonitors:   &LinkMonitorRepo{db: db},
 		Repeater:       &RepeaterRepo{db: db},
 		RepeaterACL:    &RepeaterACLRepo{db: db},
+		AppQueue:       &AppQueueRepo{db: db},
 		writerCh:       make(chan func(), writerQueueDepth),
 		writerDone:     make(chan struct{}),
 		closing:        make(chan struct{}),

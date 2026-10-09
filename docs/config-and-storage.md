@@ -58,7 +58,13 @@ radio/connection change still restarts everything (modem reconnect);
   `companions.telem_base/loc/env` hold who may read each telemetry class
   (`deny`, `selected`, `contacts`), written only by
   `PUT /api/config/companions/{id}/telemetry`, so every other companion edit
-  carries them through. The map keys on node kind and id with no foreign key
+  carries them through. `companions.app_enabled` and `app_port` are the
+  MeshCore app's TCP access (see [firmware-protocol.md](./firmware-protocol.md)),
+  written only by `PUT /api/config/companions/{id}/app`; the port is 5000-5015,
+  kept while access is off, and unique among companions with access on.
+  `app_queue` holds the message frames the app has yet to sync (the firmware's
+  offline queue, 256 per companion, oldest channel message dropped first); a
+  trigger empties it when access goes off. The map keys on node kind and id with no foreign key
   (a row may be the repeater's), so deleting a companion or the repeater deletes
   its rows, and a pruned backup drops rows whose node is gone.
 - **Config is stored relationally** (the config tables: `settings`,
@@ -527,6 +533,8 @@ GET  /api/connection-web?hours=N&ownEchoes=bool             (routes toward us, s
 PUT|DELETE /api/connection-web/pins/{hash}                  { pubkey: hex | null }   (which repeater a hop hash is)
 
 GET  /api/companions
+GET  /api/companions/{name}/app                              (the app port: enabled, port, listening, error, client, since)
+POST /api/companions/{name}/app/disconnect                   (drops the connected app; 404 while access is off)
 GET  /api/companions/{name}/contacts
 GET  /api/companions/{name}/contacts/{pubkey}                (single contact; 404 if absent)
 POST /api/companions/{name}/contacts                         { pubkey }   (also registers the peer with the running nodes)
@@ -593,6 +601,7 @@ POST /api/config/mqtt/brokers          PUT|DELETE /api/config/mqtt/brokers/{id}
 GET  /api/config/companions                                  (id, name, pubkey, privateKeySet, …)
 POST /api/config/companions            PUT|DELETE /api/config/companions/{id}
 PUT  /api/config/companions/{id}/telemetry                   { base, location, environment }   (each deny | selected | contacts)
+PUT  /api/config/companions/{id}/app                         { enabled, port }   (both required; port 5000-5015, one companion per open port)
 GET  /api/config/companions/{id}/channels
 GET  /api/health                                             (monitoring snapshot; see below)
 GET  /api/config/channels                                    (all channels; for trigger name resolution)

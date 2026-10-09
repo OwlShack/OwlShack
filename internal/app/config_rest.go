@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/OwlShack/meshcore-go/node"
+
 	"github.com/OwlShack/OwlShack/internal/api"
 	"github.com/OwlShack/OwlShack/internal/config"
 	"github.com/OwlShack/OwlShack/internal/store"
@@ -344,6 +346,9 @@ func (b *backend) SaveCompanion(ctx context.Context, in api.CompanionInput) (int
 	if err := config.RequireScope(in.FloodScope, true); err != nil {
 		return 0, err
 	}
+	if in.ShareLocation == nil {
+		return 0, api.Invalid(errors.New("shareLocation is required"))
+	}
 	// Resolve the key up front so a generation failure surfaces before the tx.
 	key := ""
 	if in.PrivateKey != nil {
@@ -376,7 +381,7 @@ func (b *backend) SaveCompanion(ctx context.Context, in api.CompanionInput) (int
 				Latitude: in.Latitude, Longitude: in.Longitude, AdvertInterval: in.AdvertInterval,
 				PathHashSize: in.PathHashSize,
 				DMPolicy:     in.DMPolicy, DMAllow: in.DMAllow,
-				FloodScope: in.FloodScope,
+				FloodScope: in.FloodScope, ShareLocation: *in.ShareLocation,
 			}
 			row.PrivateKey = key
 			// Telemetry modes have their own endpoint, so an edit from any other form must carry them through.
@@ -388,6 +393,7 @@ func (b *backend) SaveCompanion(ctx context.Context, in api.CompanionInput) (int
 					row.PrivateKey = c.PrivateKey
 				}
 				row.TelemBase, row.TelemLoc, row.TelemEnv = c.TelemBase, c.TelemLoc, c.TelemEnv
+				row.AppEnabled, row.AppPort = c.AppEnabled, c.AppPort
 			}
 			row.PubKey, _ = config.PubKeyHexFromSeed(row.PrivateKey)
 
@@ -453,6 +459,29 @@ func (b *backend) SetCompanionTelemetry(ctx context.Context, id int64, in api.Co
 	return err
 }
 
+// SetCompanionApp is its own endpoint so that access is only ever turned on deliberately, never by saving another form.
+func (b *backend) SetCompanionApp(ctx context.Context, id int64, in api.CompanionAppInput) error {
+	if in.Enabled == nil || in.Port == nil {
+		return api.Invalid(errors.New("enabled and port are both required"))
+	}
+	var row store.Companion
+	return b.configMutate(ctx,
+		func(rows *configRows) error {
+			if err := missingRow(rows.companions, id, func(c store.Companion) int64 { return c.ID }, "companion"); err != nil {
+				return err
+			}
+			for i := range rows.companions {
+				if rows.companions[i].ID == id {
+					rows.companions[i].AppEnabled, rows.companions[i].AppPort = *in.Enabled, *in.Port
+					row = rows.companions[i]
+				}
+			}
+			return nil
+		},
+		func(st *store.Store) error { return st.Companions.Update(ctx, &row) },
+	)
+}
+
 func (b *backend) DeleteCompanion(ctx context.Context, id int64) error {
 	return b.configMutate(ctx,
 		func(rows *configRows) error {
@@ -492,6 +521,9 @@ func (b *backend) SaveChannel(ctx context.Context, in api.ChannelInput) (int64, 
 			if in.ID == 0 {
 				if err := config.CheckChannelName(in.Name); err != nil {
 					return api.Invalid(err)
+				}
+				if n := len(slices.DeleteFunc(slices.Clone(rows.channels), func(c store.CompanionChannel) bool { return c.CompanionID != in.CompanionID })); n >= node.DefaultMaxChannels {
+					return api.Invalid(fmt.Errorf("the companion already has %d channels, all the node holds; remove one first", n))
 				}
 				rows.channels = append(rows.channels, row)
 				return nil

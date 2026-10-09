@@ -83,6 +83,13 @@ type companionDTO struct {
 	TelemetryLocation    string `json:"telemetryLocation"`
 	TelemetryEnvironment string `json:"telemetryEnvironment"`
 	FloodScope           string `json:"floodScope"`
+	ShareLocation        bool   `json:"shareLocation"`
+	App                  appDTO `json:"app"`
+}
+
+type appDTO struct {
+	Enabled bool `json:"enabled"`
+	Port    int  `json:"port"`
 }
 
 type channelDTO struct {
@@ -132,6 +139,7 @@ func companionToDTO(c store.Companion) companionDTO {
 		DMPolicy:     c.DMPolicy, DMAllow: c.DMAllow,
 		TelemetryBase: c.TelemBase, TelemetryLocation: c.TelemLoc, TelemetryEnvironment: c.TelemEnv,
 		FloodScope: c.FloodScope,
+		App:        appDTO{Enabled: c.AppEnabled, Port: c.AppPort}, ShareLocation: c.ShareLocation,
 	}
 }
 
@@ -383,6 +391,28 @@ func (s *Server) handleSetCompanionTelemetry(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if err := b.SetCompanionTelemetry(r.Context(), id, in); err != nil {
+		writeConfigError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleSetCompanionApp(w http.ResponseWriter, r *http.Request) {
+	b, ok := s.configBackend(w)
+	if !ok {
+		return
+	}
+	id, ok := pathID(r, "id")
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var in CompanionAppInput
+	if err := readJSON(r, &in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+	if err := b.SetCompanionApp(r.Context(), id, in); err != nil {
 		writeConfigError(w, err)
 		return
 	}

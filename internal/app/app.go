@@ -141,6 +141,12 @@ func Run(ctx context.Context, importPath string, verbosity int) error {
 	if err != nil {
 		return fmt.Errorf("web listen on %s: %w", listenAddr, err)
 	}
+	// The MeshCore app's ports listen on the web UI's host, so an install kept to localhost keeps them there too.
+	appHost, _, _ := net.SplitHostPort(ln.Addr().String())
+	if ip := net.ParseIP(appHost); ip != nil && ip.IsUnspecified() {
+		appHost = ""
+	}
+	apps := newAppServers(appHost, db, &backend{db: db, reload: reload})
 	httpServer := &http.Server{Handler: srv, ReadHeaderTimeout: 10 * time.Second}
 	httpErr := make(chan error, 1)
 	go func() {
@@ -235,6 +241,7 @@ func Run(ctx context.Context, importPath string, verbosity int) error {
 		feed = reloadMqtt(ctx, c, companions, rep, mux, ms, nil)
 		mqttObs.Store(feed.observer())
 		compReg.set(companions)
+		apps.sync(c, companions, ms, mux)
 		disc = newDiscovery()
 		return nil
 	}
@@ -245,12 +252,13 @@ func Run(ctx context.Context, importPath string, verbosity int) error {
 		srv.SetBackend(&backend{
 			companions: companions, repeater: rep, db: db, stats: statsOf(ms), mux: mux,
 			reload: reload, resetModem: resetModem, discover: disc, sensors: sensorHub, telemetry: telemetry,
-			feedPreview: feedPreview, regionScan: regionScan, mqtt: feed.observer(),
+			feedPreview: feedPreview, regionScan: regionScan, mqtt: feed.observer(), apps: apps,
 		})
 	}
 
 	// stopRadio tears the stack down and leaves the vars nil, which is the state startRadio recovers from.
 	stopRadio := func() {
+		apps.stop()
 		mqttObs.Store(nil)
 		feed.stop()
 		stopCompanions(companions)
@@ -348,6 +356,7 @@ func Run(ctx context.Context, importPath string, verbosity int) error {
 				}
 				feed = reloadMqtt(ctx, newCfg, companions, rep, mux, ms, feed)
 				mqttObs.Store(feed.observer())
+				apps.sync(newCfg, companions, ms, mux)
 			}
 			cfg = newCfg
 			compReg.set(companions)
@@ -404,33 +413,42 @@ type reloadStats struct {
 
 // reloadCompanions reuses running instances whose block is unchanged; a nil oldCfg/running builds everything.
 func reloadCompanions(ctx context.Context, oldCfg, newCfg *config.Config, running []*companion.Companion, ms *modem.State, mux *node.RadioMux, db *store.Store, hub *api.Hub, echoTracker *echo.Tracker, telemetry *telemetryPublisher) ([]*companion.Companion, reloadStats, error) {
-	oldBlocks := make(map[string]config.CompanionConfig)
+	// Matched by id, so a rename is a settings change rather than a new companion.
+	oldBlocks := make(map[int64]config.CompanionConfig)
 	if oldCfg != nil {
 		for _, b := range effectiveCompanionConfigs(oldCfg) {
-			oldBlocks[b.Name] = b
+			oldBlocks[b.ID] = b
 		}
 	}
 
-	runningByName := make(map[string]*companion.Companion, len(running))
+	runningByID := make(map[int64]*companion.Companion, len(running))
 	for _, c := range running {
-		runningByName[c.Name()] = c
+		runningByID[c.ID()] = c
 	}
 
 	type plan struct {
 		block      config.CompanionConfig
 		reuse      *companion.Companion // nil = build fresh
 		reloadTrig bool
+		apply      bool
 	}
 	newBlocks := effectiveCompanionConfigs(newCfg)
 	plans := make([]plan, 0, len(newBlocks))
 	for _, nb := range newBlocks {
-		inst, isRunning := runningByName[nb.Name]
-		ob, hadOld := oldBlocks[nb.Name]
+		inst, isRunning := runningByID[nb.ID]
+		ob, hadOld := oldBlocks[nb.ID]
+		if isRunning && hadOld && channelsRunning(inst, nb) {
+			// The node already runs these channels, saved from the Channels page or the app.
+			ob.Channels = nb.Channels
+		}
 		switch {
 		case isRunning && hadOld && blocksEqual(ob, nb):
 			plans = append(plans, plan{block: nb, reuse: inst})
 		case isRunning && hadOld && triggersOnlyChange(ob, nb):
 			plans = append(plans, plan{block: nb, reuse: inst, reloadTrig: true})
+		case isRunning && hadOld && liveOnlyChange(ob, nb):
+			// Triggers take the companion's name when built, so a rename rebuilds them too.
+			plans = append(plans, plan{block: nb, reuse: inst, apply: true, reloadTrig: ob.Name != nb.Name || !triggersEqual(ob, nb)})
 		default:
 			plans = append(plans, plan{block: nb})
 		}
@@ -462,11 +480,16 @@ func reloadCompanions(ctx context.Context, oldCfg, newCfg *config.Config, runnin
 
 	for _, p := range plans {
 		if p.reuse != nil {
+			if p.apply {
+				p.reuse.ApplySettings(p.block)
+			}
 			if p.reloadTrig {
 				if err := p.reuse.ReloadTriggers(p.block); err != nil {
 					stopAll()
 					return nil, stats, fmt.Errorf("reloading triggers for %q: %w", p.block.Name, err)
 				}
+			}
+			if p.reloadTrig || p.apply {
 				stats.reloaded++
 			} else {
 				stats.kept++
@@ -511,7 +534,9 @@ func effectiveCompanionConfigs(cfg *config.Config) []config.CompanionConfig {
 }
 
 // blocksEqual compares blocks as JSON; a marshal error reports "not equal", erring towards a restart.
+// App access is left out: its port opens and closes beside a running companion.
 func blocksEqual(a, b config.CompanionConfig) bool {
+	a.App, b.App = config.AppAccess{}, config.AppAccess{}
 	aj, err1 := json.Marshal(a)
 	bj, err2 := json.Marshal(b)
 	return err1 == nil && err2 == nil && bytes.Equal(aj, bj)
@@ -522,6 +547,32 @@ func triggersOnlyChange(a, b config.CompanionConfig) bool {
 	a.Triggers = nil
 	b.Triggers = nil
 	return blocksEqual(a, b)
+}
+
+func triggersEqual(a, b config.CompanionConfig) bool {
+	return blocksEqual(config.CompanionConfig{Triggers: a.Triggers}, config.CompanionConfig{Triggers: b.Triggers})
+}
+
+// liveOnlyChange reports whether the blocks differ only in settings the companion reads as it uses them (and in triggers), so it can take them without a rebuild that would advertise again and drop every login.
+func liveOnlyChange(a, b config.CompanionConfig) bool {
+	for _, c := range []*config.CompanionConfig{&a, &b} {
+		c.Name, c.Latitude, c.Longitude, c.ShareLocation = "", nil, nil, nil
+		c.TelemetryBase, c.TelemetryLocation, c.TelemetryEnvironment = nil, nil, nil
+		c.FloodScope, c.PathHashSize, c.DMPolicy, c.DMAllow, c.Triggers = "", nil, nil, nil, nil
+	}
+	return blocksEqual(a, b)
+}
+
+// channelsRunning reports whether the node already runs exactly the block's channels, in their slots.
+func channelsRunning(c *companion.Companion, b config.CompanionConfig) bool {
+	want, got := config.ChannelList{}, config.ChannelList(c.StandaloneChannels())
+	if b.Channels != nil {
+		want = *b.Channels
+	}
+	if got == nil {
+		got = config.ChannelList{}
+	}
+	return blocksEqual(config.CompanionConfig{Channels: &want}, config.CompanionConfig{Channels: &got})
 }
 
 func stopCompanions(companions []*companion.Companion) {

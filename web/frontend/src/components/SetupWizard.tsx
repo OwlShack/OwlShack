@@ -144,6 +144,7 @@ export function SetupWizard({
           longitude: lon === "" ? null : parseFloat(lon) || 0,
           privateKey: privateKey.trim() || undefined,
           floodScope: "inherit",
+          shareLocation: true,
           advertInterval: advertInterval.trim()
             ? parseInt(advertInterval, 10) || 0
             : undefined,

@@ -79,9 +79,9 @@ func (c *Companion) telemetryPermissions(granted byte) byte {
 		mode *string
 		bit  byte
 	}{
-		{c.cfg.TelemetryBase, sensor.PermBase},
-		{c.cfg.TelemetryLocation, sensor.PermLocation},
-		{c.cfg.TelemetryEnvironment, sensor.PermEnvironment},
+		{c.conf().TelemetryBase, sensor.PermBase},
+		{c.conf().TelemetryLocation, sensor.PermLocation},
+		{c.conf().TelemetryEnvironment, sensor.PermEnvironment},
 	}
 	var perms byte
 	for _, cl := range classes {
