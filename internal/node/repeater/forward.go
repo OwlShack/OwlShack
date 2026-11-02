@@ -1,6 +1,13 @@
 package repeater
 
-import meshcore "github.com/OwlShack/meshcore-go"
+import (
+	"bytes"
+	"encoding/hex"
+
+	meshcore "github.com/OwlShack/meshcore-go"
+
+	"github.com/OwlShack/OwlShack/internal/config"
+)
 
 // Firmware max_loop_* tables indexed by path hash size; value N means drop once our own hash appears >= N times.
 var (
@@ -35,6 +42,14 @@ func (r *Repeater) allowForward(pkt *meshcore.Packet) bool {
 		if r.isLooped(pkt) {
 			return false
 		}
+
+		// A relay peer already put this copy on air from beside us.
+		if _, peer := r.lastHopPeer(pkt); peer {
+			return false
+		}
+		if r.hasDedupe {
+			r.backupRelays.Add(1)
+		}
 	}
 
 	// Wire size ~ header + pathLen byte + path + payload.
@@ -61,6 +76,46 @@ func loopThreshold(level string, hashSize int) int {
 	default: // "off"
 		return 0
 	}
+}
+
+// relayPeer is a config.RelayPeer decoded once for the packet path.
+type relayPeer struct {
+	pub    [32]byte
+	dedupe bool
+}
+
+// parseRelayPeers skips a key that doesn't decode; Validate refuses those, so only a hand-built config has one.
+func parseRelayPeers(peers []config.RelayPeer) (out []relayPeer, hasDedupe bool) {
+	for _, p := range peers {
+		b, err := hex.DecodeString(p.PubKey)
+		if err != nil || len(b) != 32 {
+			continue
+		}
+		rp := relayPeer{dedupe: p.Mode == config.RelayPeerDedupe}
+		copy(rp.pub[:], b)
+		out = append(out, rp)
+		hasDedupe = hasDedupe || rp.dedupe
+	}
+	return out, hasDedupe
+}
+
+// lastHopPeer matches a flood's last relayer against the relay peers; a hash can match more than one, and dedupe wins.
+func (r *Repeater) lastHopPeer(pkt *meshcore.Packet) (dedupe, found bool) {
+	if len(r.relayPeers) == 0 || !pkt.IsRouteFlood() {
+		return false, false
+	}
+	hashes := pkt.PathHashes()
+	if len(hashes) == 0 {
+		return false, false
+	}
+	h := hashes[len(hashes)-1]
+	for _, p := range r.relayPeers {
+		if bytes.Equal(h, p.pub[:len(h)]) {
+			found = true
+			dedupe = dedupe || p.dedupe
+		}
+	}
+	return dedupe, found
 }
 
 // isLooped ports MyMesh::isLooped.

@@ -152,6 +152,18 @@ The node we run (`internal/node/repeater`) is measured against MeshCore 1.17.1
   SF, so rxdelay is off when the radio params are unknown) and `multi_acks`.
   Setting `WithRxDelay` moves dispatch onto the library's single inbound
   goroutine — handlers still never run concurrently.
+- **Relay peers are OwlShack's own; the firmware has nothing like them.**
+  `RepeaterConfig.RelayPeers` names neighbouring repeaters by full pubkey, and
+  `lastHopPeer` (`forward.go`) matches one against a flood's *last* path hash at
+  that hash's width. `allowForward` never relays a copy whose last hop is a peer.
+  With a `dedupe` peer set, `rxDelay` gives that peer's copy 0 and adds
+  `DedupeHold` × airtime (default 4) to every other flood, so the peer's relay is
+  processed, refused and marked seen while ours waits, and the held copy then dies
+  as a duplicate. The decision has to come before the duplicate check: the
+  library's TX queue cannot drop an entry, so a longer TX delay only sends the
+  same relay later. `backupRelays` counts the floods relayed with a dedupe peer
+  set, which are the ones it missed. A 1-byte hash can match another repeater in
+  range, and an ignored copy that arrives first marks the whole packet seen.
 - **Direct replies** to a client route along the path learned from its flood
   request **reversed** into send order (`learnFloodRoute` / `reverseHops`) —
   the PATH-return carries it in the sender's order. Flooded replies copy the

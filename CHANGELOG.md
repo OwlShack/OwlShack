@@ -3,6 +3,19 @@
 Notable changes per release. Dates are the tag date; unreleased work sits at the
 top until tagged.
 
+## Unreleased
+
+### Added
+
+- **Your repeater can stand by for a repeater beside it and relay only what that one misses.** In
+  the repeater's Settings, under Relay policy, add the other repeater to Ignore and dedupe as
+  Dedupe. Your repeater then waits a moment on each flood, stays quiet when the other repeater
+  relays it, and relays it itself when the other one doesn't, so each packet goes on air once
+  instead of twice. Status shows Backup relays, the packets the other repeater missed; if that
+  count climbs fast, the other repeater may be down. If the other repeater's TX delay factor is
+  above 0.6, raise Dedupe hold to its factor × 5 + 1. Set a repeater to Ignore instead to never
+  relay what it relays, without waiting for it.
+
 ## v1.6.1 - 2026-10-27
 
 Baseline `v1.6.0`. Fixes moving a bot to another companion.

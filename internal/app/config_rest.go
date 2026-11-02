@@ -714,6 +714,8 @@ func (b *backend) UpdateRepeaterRelay(ctx context.Context, in api.RepeaterRelayI
 		r.MultiAcks = in.MultiAcks
 		r.AdvertInterval = in.AdvertInterval
 		r.FloodAdvertInterval = in.FloodAdvertInterval
+		r.RelayPeers = in.RelayPeers
+		r.DedupeHold = in.DedupeHold
 		return nil
 	})
 }

@@ -51,7 +51,23 @@ type RepeaterConfig struct {
 
 	// Transport-flood scopes the repeater relays; the key is SHA256(name)[:16] (firmware getAutoKeyFor), not a hashtag.
 	Regions []RepeaterRegion `json:"regions,omitempty" yaml:"regions,omitempty" toml:"region,omitempty"`
+
+	// Neighbouring repeaters whose relays shape ours (OwlShack only, no firmware equivalent).
+	RelayPeers []RelayPeer `json:"relayPeers,omitempty" yaml:"relayPeers,omitempty" toml:"relayPeer,omitempty"`
+	// DedupeHold is how long a flood waits for a dedupe peer to relay it, in airtimes of that packet; nil == DefaultDedupeHold.
+	DedupeHold *float64 `json:"dedupeHold,omitempty" yaml:"dedupeHold,omitempty" toml:"dedupeHold,omitempty"`
 }
+
+// RelayPeer matches the last hop of a flood: we never relay its copies, and a dedupe peer also holds every other copy so we relay only what it misses.
+type RelayPeer struct {
+	PubKey string `json:"pubkey" yaml:"pubkey" toml:"pubkey"` // 64 hex
+	Mode   string `json:"mode" yaml:"mode" toml:"mode"`       // RelayPeerIgnore or RelayPeerDedupe
+}
+
+const (
+	RelayPeerIgnore = "ignore"
+	RelayPeerDedupe = "dedupe"
+)
 
 // RepeaterRegion is one transport scope the repeater serves; DenyFlood keeps it known but not re-flooded.
 type RepeaterRegion struct {
@@ -159,6 +175,11 @@ const (
 	DefaultDirectTxDelayFactor = 0.3
 	MaxTxDelayFactor           = 2.0
 	MaxRxDelayBase             = 20.0
+
+	// 4 airtimes outlasts a firmware repeater at txdelay 0.5 (up to 2.5 waiting plus 1 sending); any less and ours goes out too.
+	DefaultDedupeHold = 4.0
+	MinDedupeHold     = 4.0
+	MaxDedupeHold     = 20.0
 )
 
 // Valid loop-detect levels, matching the firmware's LOOP_DETECT_* enum.
@@ -235,6 +256,13 @@ func (c *RepeaterConfig) RxDelayBaseOr() float64 {
 		return 0
 	}
 	return *c.RxDelayBase
+}
+
+func (c *RepeaterConfig) DedupeHoldOr() float64 {
+	if c.DedupeHold == nil {
+		return DefaultDedupeHold
+	}
+	return *c.DedupeHold
 }
 
 func (c *RepeaterConfig) MultiAcksOr() int {

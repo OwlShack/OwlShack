@@ -26,8 +26,12 @@ export function isCompanionPeer(p: PickablePeer): boolean {
   return ["CHAT", ""].includes((p.type ?? "").toUpperCase());
 }
 
-// PeerPicker is the searchable companion list plus a manual-pubkey escape hatch, shared by every
-// "choose a peer" surface so they filter and validate the same way.
+export function isRepeaterPeer(p: PickablePeer): boolean {
+  return (p.type ?? "").toUpperCase() === "REPEATER";
+}
+
+// PeerPicker is the searchable peer list (companions unless `accept` says otherwise) plus a
+// manual-pubkey escape hatch, shared by every "choose a peer" surface so they filter and validate the same way.
 export function PeerPicker({
   peers,
   knownPrefixes,
@@ -35,6 +39,7 @@ export function PeerPicker({
   disabled,
   manualInputId,
   alreadyAddedLabel = "already added",
+  accept = isCompanionPeer,
 }: {
   peers: PickablePeer[];
   knownPrefixes: Set<string>;
@@ -42,13 +47,14 @@ export function PeerPicker({
   disabled?: boolean;
   manualInputId: string;
   alreadyAddedLabel?: string;
+  accept?: (p: PickablePeer) => boolean;
 }) {
   const [search, setSearch] = useState("");
   const [manualKey, setManualKey] = useState("");
 
   const candidates = useMemo(() => {
     const pool = peers.filter(
-      (p) => !knownPrefixes.has(p.pubkey.toLowerCase().slice(0, 12)) && isCompanionPeer(p),
+      (p) => !knownPrefixes.has(p.pubkey.toLowerCase().slice(0, 12)) && accept(p),
     );
     const q = search.trim().toLowerCase();
     const filtered = q
@@ -58,7 +64,7 @@ export function PeerPicker({
         )
       : pool;
     return [...filtered].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
-  }, [peers, knownPrefixes, search]);
+  }, [peers, knownPrefixes, search, accept]);
 
   const manualValid = HEX64_RE.test(manualKey.trim());
   const manualAlreadyAdded =
@@ -177,6 +183,8 @@ export function PeerListField({
   dialogTitle,
   dialogDescription,
   idPrefix,
+  accept,
+  rowExtra,
 }: {
   label: string;
   values: string[];
@@ -188,6 +196,9 @@ export function PeerListField({
   dialogTitle: string;
   dialogDescription: string;
   idPrefix: string;
+  accept?: (p: PickablePeer) => boolean;
+  // rowExtra renders a per-entry control beside the remove button.
+  rowExtra?: (value: string) => ReactNode;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -230,6 +241,7 @@ export function PeerListField({
                   </code>
                 )}
               </div>
+              {rowExtra?.(value)}
               <Button
                 type="button"
                 variant="ghost"
@@ -272,6 +284,7 @@ export function PeerListField({
               knownPrefixes={chosenPrefixes}
               manualInputId={`${idPrefix}-manual-pubkey`}
               alreadyAddedLabel="already on the list"
+              accept={accept}
               onPick={(pubkey) => {
                 onChange([...values, pubkey]);
                 setOpen(false);

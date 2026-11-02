@@ -17,6 +17,12 @@ type RepeaterRegion struct {
 	DenyFlood bool   `json:"denyFlood,omitempty"`
 }
 
+// RepeaterRelayPeer is a neighbouring repeater whose relays shape ours, stored as JSON in repeater.relay_peers.
+type RepeaterRelayPeer struct {
+	PubKey string `json:"pubkey"`
+	Mode   string `json:"mode"`
+}
+
 // Repeater is the singleton repeater row (id=1); a missing row means none is configured, since a radio hosts one relay identity.
 type Repeater struct {
 	Name                string
@@ -42,6 +48,8 @@ type Repeater struct {
 	GuestPassword       string
 	OwnerInfo           string
 	Regions             []RepeaterRegion
+	RelayPeers          []RepeaterRelayPeer
+	DedupeHold          *float64
 }
 
 type RepeaterRepo struct{ db *sql.DB }
@@ -49,18 +57,21 @@ type RepeaterRepo struct{ db *sql.DB }
 // Get returns the configured repeater, or sql.ErrNoRows when none is set.
 func (r *RepeaterRepo) Get(ctx context.Context) (*Repeater, error) {
 	var rep Repeater
-	var regionsJSON string
+	var regionsJSON, peersJSON string
 	err := r.db.QueryRowContext(ctx, `
 		SELECT name, private_key, pubkey, latitude, longitude, advert_interval,
 		       flood_advert_interval, disable_fwd, flood_max, flood_max_unscoped, flood_max_advert,
 		       loop_detect, path_hash_size, tx_delay_factor, direct_tx_delay_factor, rx_delay_base, multi_acks,
-		       flood_scope, home_region, admin_password, guest_password, owner_info, regions
+		       flood_scope, home_region, admin_password, guest_password, owner_info, regions, relay_peers, dedupe_hold
 		FROM repeater WHERE id = 1`).Scan(
 		&rep.Name, &rep.PrivateKey, &rep.PubKey, &rep.Latitude, &rep.Longitude, &rep.AdvertInterval,
 		&rep.FloodAdvertInterval, &rep.DisableFwd, &rep.FloodMax, &rep.FloodMaxUnscoped, &rep.FloodMaxAdvert,
-		&rep.LoopDetect, &rep.PathHashSize, &rep.TxDelayFactor, &rep.DirectTxDelayFactor, &rep.RxDelayBase, &rep.MultiAcks, &rep.FloodScope, &rep.HomeRegion, &rep.AdminPassword, &rep.GuestPassword, &rep.OwnerInfo, &regionsJSON)
+		&rep.LoopDetect, &rep.PathHashSize, &rep.TxDelayFactor, &rep.DirectTxDelayFactor, &rep.RxDelayBase, &rep.MultiAcks, &rep.FloodScope, &rep.HomeRegion, &rep.AdminPassword, &rep.GuestPassword, &rep.OwnerInfo, &regionsJSON, &peersJSON, &rep.DedupeHold)
 	if err != nil {
 		return nil, err // includes sql.ErrNoRows for "no repeater configured"
+	}
+	if err := json.Unmarshal([]byte(peersJSON), &rep.RelayPeers); err != nil {
+		return nil, fmt.Errorf("decoding repeater relay peers: %w", err)
 	}
 	if regionsJSON != "" {
 		if err := json.Unmarshal([]byte(regionsJSON), &rep.Regions); err != nil {
@@ -126,16 +137,24 @@ func (r *RepeaterRepo) Set(ctx context.Context, rep *Repeater) error {
 	if err != nil {
 		return fmt.Errorf("encoding repeater regions: %w", err)
 	}
+	peers := rep.RelayPeers
+	if peers == nil {
+		peers = []RepeaterRelayPeer{}
+	}
+	peersJSON, err := json.Marshal(peers)
+	if err != nil {
+		return fmt.Errorf("encoding repeater relay peers: %w", err)
+	}
 	_, err = r.db.ExecContext(ctx, `
 		INSERT OR REPLACE INTO repeater
 			(id, name, private_key, pubkey, latitude, longitude, advert_interval,
 			 flood_advert_interval, disable_fwd, flood_max, flood_max_unscoped, flood_max_advert,
 			 loop_detect, path_hash_size, tx_delay_factor, direct_tx_delay_factor, rx_delay_base, multi_acks,
-			 flood_scope, home_region, admin_password, guest_password, owner_info, regions)
-		VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 flood_scope, home_region, admin_password, guest_password, owner_info, regions, relay_peers, dedupe_hold)
+		VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		rep.Name, rep.PrivateKey, rep.PubKey, rep.Latitude, rep.Longitude, rep.AdvertInterval,
 		rep.FloodAdvertInterval, rep.DisableFwd, rep.FloodMax, rep.FloodMaxUnscoped, rep.FloodMaxAdvert,
-		rep.LoopDetect, rep.PathHashSize, rep.TxDelayFactor, rep.DirectTxDelayFactor, rep.RxDelayBase, rep.MultiAcks, cmp.Or(rep.FloodScope, "everywhere"), rep.HomeRegion, rep.AdminPassword, rep.GuestPassword, rep.OwnerInfo, string(regionsJSON))
+		rep.LoopDetect, rep.PathHashSize, rep.TxDelayFactor, rep.DirectTxDelayFactor, rep.RxDelayBase, rep.MultiAcks, cmp.Or(rep.FloodScope, "everywhere"), rep.HomeRegion, rep.AdminPassword, rep.GuestPassword, rep.OwnerInfo, string(regionsJSON), string(peersJSON), rep.DedupeHold)
 	if err != nil {
 		return fmt.Errorf("upserting repeater: %w", err)
 	}

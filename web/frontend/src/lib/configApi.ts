@@ -230,6 +230,14 @@ export interface ConfigRepeater {
   ownerInfo: string;
   regions: RepeaterRegion[];
   homeRegion: string; // "*" when none is set
+  relayPeers: RelayPeer[];
+  dedupeHold: number | null;
+}
+
+// A neighbouring repeater whose relays shape ours: we never relay its copies, and for a dedupe peer we hold every other copy and relay only what it misses.
+export interface RelayPeer {
+  pubkey: string;
+  mode: "ignore" | "dedupe";
 }
 
 // A transport scope the repeater relays; its key derives from the name as SHA256(name)[:16].
@@ -263,6 +271,7 @@ export interface RepeaterNodeStats {
   directRx: number;
   floodDups: number;
   directDups: number;
+  backupRelays?: number; // only with a dedupe peer set
 }
 
 export interface RepeaterNodeNeighbor {
@@ -382,6 +391,8 @@ export interface RepeaterRelayInput {
   multiAcks?: number | null;
   advertInterval?: number | null;
   floodAdvertInterval?: number | null;
+  relayPeers?: RelayPeer[];
+  dedupeHold?: number | null;
 }
 
 export interface RepeaterAdminInput {

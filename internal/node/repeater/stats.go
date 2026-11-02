@@ -34,6 +34,7 @@ type Stats struct {
 	DirectRx         uint64   `json:"directRx"`
 	FloodDups        uint64   `json:"floodDups"`
 	DirectDups       uint64   `json:"directDups"`
+	BackupRelays     *uint64  `json:"backupRelays,omitempty"` // only with a dedupe peer set
 }
 
 // NeighborInfo is a directly-heard repeater, for the API neighbours list.
@@ -75,6 +76,10 @@ func (r *Repeater) Stats() Stats {
 		DirectRx:         rc.DirectReceived,
 		FloodDups:        rc.FloodDuplicates,
 		DirectDups:       rc.DirectDuplicates,
+	}
+	if r.hasDedupe {
+		n := r.backupRelays.Load()
+		s.BackupRelays = &n
 	}
 	if r.haveSignal.Load() {
 		snr := float64(r.lastSNRx4.Load()) / 4

@@ -281,6 +281,12 @@ radio/connection change still restarts everything (modem reconnect);
   repeaters, then sends each an anon REGIONS request (type 0x01, direct, empty reply path, from the
   first companion) and retries once: the firmware answers only a direct one, and only 4 every 3
   minutes from anyone (`anon_limiter(4, 180)`), so a second retry would cost half that.
+- **Relay peers are `repeater.relay_peers`** (JSON `[{pubkey, mode}]`, mode `ignore` or
+  `dedupe`, full 64-hex keys) with `repeater.dedupe_hold` (airtimes, NULL = 4, 4-20: less lets a
+  firmware repeater at its default txdelay relay after the hold ends). They save with the rest of
+  the relay policy through `PUT /api/config/repeater/relay`, which replaces the whole list and
+  restarts the node, so the repeater parses the list once at start. What they do on the air is in
+  [firmware-protocol.md](./firmware-protocol.md).
 - **DM acceptance is `companions.dm_policy`** (`contacts` | `allowlist` |
   `anyone`, default `contacts`) with `companions.dm_allow` holding the
   allowlist's pubkeys newline-encoded, the same encoding `triggers.contacts`

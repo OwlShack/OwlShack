@@ -26,15 +26,23 @@ func relayDelay(airtimeMs uint32, factor float64) time.Duration {
 	return time.Duration(rand.IntN(int(5*t)+1)) * time.Millisecond
 }
 
-// rxDelay ports MyMesh::calcRxDelay: (base^(0.85-score) - 1) × airtime, off when base is 0 or the SF is unknown.
+// rxDelay ports MyMesh::calcRxDelay ((base^(0.85-score) - 1) × airtime, off when base is 0 or the SF is unknown), plus the dedupe hold on every flood a dedupe peer didn't relay.
 func (r *Repeater) rxDelay(pkt *meshcore.Packet, packetLen int, airtimeMs uint32) time.Duration {
-	cfg := r.cfgSnapshot()
-	base := cfg.RxDelayBaseOr()
-	if base <= 0 || r.sf == 0 {
+	dedupe, peer := r.lastHopPeer(pkt)
+	if dedupe {
 		return 0
 	}
-	score := hardware.PacketScore(float64(pkt.SNR), r.sf, packetLen)
-	return time.Duration((math.Pow(base, 0.85-score)-1)*float64(airtimeMs)) * time.Millisecond
+	cfg := r.cfgSnapshot()
+	var d time.Duration
+	if base := cfg.RxDelayBaseOr(); base > 0 && r.sf != 0 {
+		score := hardware.PacketScore(float64(pkt.SNR), r.sf, packetLen)
+		// A strong packet scores past 0.85 and comes out negative, which means no delay; added to the hold it would shorten it.
+		d = max(0, time.Duration((math.Pow(base, 0.85-score)-1)*float64(airtimeMs))*time.Millisecond)
+	}
+	if r.hasDedupe && !peer && !cfg.IsFwdDisabled() {
+		d += time.Duration(cfg.DedupeHoldOr() * float64(airtimeMs) * float64(time.Millisecond))
+	}
+	return d
 }
 
 // extraAcks is the firmware getExtraAckTransmitCount (NodePrefs multi_acks).

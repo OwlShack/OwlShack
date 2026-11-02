@@ -1023,6 +1023,7 @@ func renderRegionTree(regions []config.RepeaterRegion, home string) string {
 func (r *Repeater) clearStats() {
 	r.recvCount.Store(0)
 	r.fwdCount.Store(0)
+	r.backupRelays.Store(0)
 	r.sentFlood.Store(0)
 	r.sentDirect.Store(0)
 	if r.routeStats != nil {

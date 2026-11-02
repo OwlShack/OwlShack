@@ -6,6 +6,8 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+
+	"github.com/OwlShack/OwlShack/internal/store"
 )
 
 // Routes for the repeater we run, distinct from /api/companions/{name}/repeaters/* which drive remote ones.
@@ -37,6 +39,10 @@ type repeaterDTO struct {
 	OwnerInfo           string              `json:"ownerInfo"`
 	Regions             []repeaterRegionDTO `json:"regions"`
 	HomeRegion          string              `json:"homeRegion"` // "*" when none is set, as the firmware reports it
+
+	// OwlShack only: neighbouring repeaters whose relays shape ours.
+	RelayPeers []store.RepeaterRelayPeer `json:"relayPeers"`
+	DedupeHold *float64                  `json:"dedupeHold"`
 }
 
 type repeaterRegionDTO struct {
@@ -92,6 +98,8 @@ func (s *Server) handleGetRepeater(w http.ResponseWriter, r *http.Request) {
 		OwnerInfo:           rep.OwnerInfo,
 		Regions:             regions,
 		HomeRegion:          cmp.Or(rep.HomeRegion, "*"),
+		RelayPeers:          rep.RelayPeers,
+		DedupeHold:          rep.DedupeHold,
 	})
 }
 

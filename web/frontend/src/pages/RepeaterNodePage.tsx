@@ -49,6 +49,7 @@ import {
 } from "@/components/ui/select";
 import { Field, TextField, SelectField, SwitchRow, PATH_HASH_SIZE_OPTIONS } from "@/components/ConfigFields";
 import { PositionPicker, round6 } from "@/components/PositionPicker";
+import { PeerListField, isRepeaterPeer } from "@/components/PeerPicker";
 import { InlineConfirm } from "@/components/InlineConfirm";
 import { Button } from "@/components/ui/button";
 import { HeaderButton } from "@/components/HeaderButton";
@@ -75,6 +76,7 @@ import {
   type RepeaterNodeStats,
   type RepeaterAclEntry,
   type RepeaterRegion,
+  type RelayPeer,
 } from "@/lib/configApi";
 import { regionName } from "@/components/RegionSelect";
 import { NESTING_HINT } from "@/components/RegionTree";
@@ -323,7 +325,7 @@ export function RepeaterNodePage() {
               <TelemetryMapEditor node={repeaterNode} />
             </TabsContent>
             <TabsContent value="settings" className="mt-0">
-              <SettingsTab rep={rep} reload={reload} />
+              <SettingsTab rep={rep} reload={reload} peers={peers ?? []} />
             </TabsContent>
           </Tabs>
         </>
@@ -478,6 +480,7 @@ function StatusTab({
           />
           <StatTile label="Pkts recv" value={`${stats.packetsReceived}`} />
           <StatTile label="Pkts relayed" value={`${stats.packetsForwarded}`} accent />
+          {stats.backupRelays != null && <StatTile label="Backup relays" value={`${stats.backupRelays}`} />}
           <StatTile label="Flood TX" value={`${stats.floodTx}`} />
           <StatTile label="Flood RX" value={`${stats.floodRx}`} />
           <StatTile label="Direct TX" value={`${stats.directTx}`} />
@@ -737,7 +740,7 @@ function AccessTab({
   );
 }
 
-function SettingsTab({ rep, reload }: { rep: ConfigRepeater; reload: () => void }) {
+function SettingsTab({ rep, reload, peers }: { rep: ConfigRepeater; reload: () => void; peers: PeerLike[] }) {
   const [saving, setSaving] = useState<"node" | "relay" | "admin" | null>(null);
   const [busyDelete, setBusyDelete] = useState(false);
   const [regionBusy, setRegionBusy] = useState(false);
@@ -764,6 +767,8 @@ function SettingsTab({ rep, reload }: { rep: ConfigRepeater; reload: () => void 
   const [rxDelay, setRxDelay] = useState("");
   const [multiAcks, setMultiAcks] = useState("");
   const [disableFwd, setDisableFwd] = useState(false);
+  const [relayPeers, setRelayPeers] = useState<RelayPeer[]>([]);
+  const [dedupeHold, setDedupeHold] = useState("");
   const [ownerInfo, setOwnerInfo] = useState("");
   const [adminPw, setAdminPw] = useState({ value: "", dirty: false });
   const [guestPw, setGuestPw] = useState({ value: "", dirty: false });
@@ -787,6 +792,8 @@ function SettingsTab({ rep, reload }: { rep: ConfigRepeater; reload: () => void 
     setRxDelay(rep.rxDelayBase != null ? String(rep.rxDelayBase) : "");
     setMultiAcks(rep.multiAcks != null ? String(rep.multiAcks) : "");
     setDisableFwd(rep.disableFwd ?? false);
+    setRelayPeers(rep.relayPeers ?? []);
+    setDedupeHold(rep.dedupeHold != null ? String(rep.dedupeHold) : "");
     setOwnerInfo(rep.ownerInfo);
     setPrivateKey("");
     setAdminPw({ value: "", dirty: false });
@@ -855,6 +862,8 @@ function SettingsTab({ rep, reload }: { rep: ConfigRepeater; reload: () => void 
           multiAcks: num(multiAcks),
           advertInterval: toSecs(advertInterval, 60),
           floodAdvertInterval: toSecs(floodAdvertInterval, 3600),
+          relayPeers,
+          dedupeHold: num(dedupeHold),
         }),
       "Relay policy saved",
     );
@@ -1064,6 +1073,56 @@ function SettingsTab({ rep, reload }: { rep: ConfigRepeater; reload: () => void 
               onChange={setMultiAcks}
               placeholder="0"
               hint="extra copies of relayed ACKs · firmware multi.acks"
+            />
+          </div>
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
+            <div className="lg:col-span-3">
+              <PeerListField
+                label="Ignore and dedupe"
+                values={relayPeers.map((p) => p.pubkey)}
+                onChange={(keys) =>
+                  setRelayPeers(
+                    keys.map((k) => relayPeers.find((p) => p.pubkey === k) ?? { pubkey: k, mode: "dedupe" }),
+                  )
+                }
+                peers={peers}
+                accept={isRepeaterPeer}
+                rowExtra={(key) => (
+                  <Select
+                    value={relayPeers.find((p) => p.pubkey === key)?.mode ?? "dedupe"}
+                    onValueChange={(v) =>
+                      setRelayPeers(
+                        relayPeers.map((p) => (p.pubkey === key ? { ...p, mode: v as RelayPeer["mode"] } : p)),
+                      )
+                    }
+                  >
+                    <SelectTrigger className="rounded-none font-mono text-[10px] uppercase tracking-widest h-7 w-28 border-border bg-background">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="rounded-none font-mono text-xs">
+                      <SelectItem value="dedupe" className="rounded-none font-mono text-xs">
+                        Dedupe
+                      </SelectItem>
+                      <SelectItem value="ignore" className="rounded-none font-mono text-xs">
+                        Ignore
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                )}
+                addLabel="Add repeater"
+                emptyHint="none · every flood is relayed as usual"
+                hint="ignore: do not relay packets from the listed repeater · dedupe: the same as ignore, and do not relay a packet from another node if the listed repeater relayed that packet · the match uses the hash of the last hop"
+                dialogTitle="Add a relay peer"
+                dialogDescription="A repeater near this one whose relays should not be repeated. It starts as dedupe."
+                idPrefix="relay-peer"
+              />
+            </div>
+            <TextField
+              label="Dedupe hold"
+              value={dedupeHold}
+              onChange={setDedupeHold}
+              placeholder="4"
+              hint="airtimes to wait for the dedupe repeater · 4-20 · if the txdelay of the dedupe repeater × 5 + 1 is more than 4, use that result"
             />
           </div>
           <SectionSave busy={saving === "relay"} disabled={saving !== null} onClick={saveRelay} />

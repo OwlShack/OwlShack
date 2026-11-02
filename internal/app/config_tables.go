@@ -237,9 +237,13 @@ func assembleFromRows(rows *configRows) *config.Config {
 			AdminPassword:       r.AdminPassword,
 			GuestPassword:       r.GuestPassword,
 			OwnerInfo:           r.OwnerInfo,
+			DedupeHold:          r.DedupeHold,
 		}
 		for _, rg := range r.Regions {
 			cfg.Repeater.Regions = append(cfg.Repeater.Regions, config.RepeaterRegion{Name: rg.Name, Parent: rg.Parent, DenyFlood: rg.DenyFlood})
+		}
+		for _, p := range r.RelayPeers {
+			cfg.Repeater.RelayPeers = append(cfg.Repeater.RelayPeers, config.RelayPeer{PubKey: p.PubKey, Mode: p.Mode})
 		}
 	}
 
@@ -414,6 +418,10 @@ func writeRepeater(ctx context.Context, st *store.Store, cfg *config.Config) err
 	for _, rg := range r.Regions {
 		regions = append(regions, store.RepeaterRegion{Name: rg.Name, Parent: rg.Parent, DenyFlood: rg.DenyFlood})
 	}
+	var peers []store.RepeaterRelayPeer
+	for _, p := range r.RelayPeers {
+		peers = append(peers, store.RepeaterRelayPeer{PubKey: p.PubKey, Mode: p.Mode})
+	}
 	return st.Repeater.Set(ctx, &store.Repeater{
 		Name:                r.Name,
 		PrivateKey:          r.PrivateKey,
@@ -438,6 +446,8 @@ func writeRepeater(ctx context.Context, st *store.Store, cfg *config.Config) err
 		GuestPassword:       r.GuestPassword,
 		OwnerInfo:           r.OwnerInfo,
 		Regions:             regions,
+		RelayPeers:          peers,
+		DedupeHold:          r.DedupeHold,
 	})
 }
 

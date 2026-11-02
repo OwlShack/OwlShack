@@ -42,6 +42,11 @@ type Repeater struct {
 	recvCount atomic.Uint64 // raw packets received (radio raw handler)
 	fwdCount  atomic.Uint64 // packets we relayed (allowForward returned true)
 
+	// relayPeers is fixed for the node's life: a relay-policy save restarts it.
+	relayPeers   []relayPeer
+	hasDedupe    bool
+	backupRelays atomic.Uint64 // floods relayed while a dedupe peer is set: the ones it missed
+
 	// TX counters; RX / dup counters come from the router, rebased at `clear stats` via statsBase.
 	sentFlood  atomic.Uint64
 	sentDirect atomic.Uint64
@@ -145,6 +150,7 @@ func NewRepeater(cfg config.RepeaterConfig, mux *node.RadioMux, st *store.Store,
 		r.airtime = src.EstAirtime
 	}
 	r.sf = settingsSF(st)
+	r.relayPeers, r.hasDedupe = parseRelayPeers(cfg.RelayPeers)
 
 	opts := []node.Option{
 		node.WithMaxPeers(100_000),

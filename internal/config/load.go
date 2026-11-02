@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -323,6 +324,23 @@ func (c *Config) Validate() error {
 		}
 		if v := r.MultiAcks; v != nil && (*v < 0 || *v > 255) {
 			return fmt.Errorf("repeater %q: multiAcks must be 0-255", r.Name)
+		}
+		if v := r.DedupeHold; v != nil && !(*v >= MinDedupeHold && *v <= MaxDedupeHold) {
+			return fmt.Errorf("repeater %q: dedupeHold must be %g-%g airtimes", r.Name, MinDedupeHold, MaxDedupeHold)
+		}
+		seenPeer := make(map[string]bool, len(r.RelayPeers))
+		for i, p := range r.RelayPeers {
+			if b, err := hex.DecodeString(p.PubKey); err != nil || len(b) != 32 {
+				return fmt.Errorf("repeater %q relayPeer[%d]: pubkey must be 64 hex characters", r.Name, i)
+			}
+			if p.Mode != RelayPeerIgnore && p.Mode != RelayPeerDedupe {
+				return fmt.Errorf("repeater %q relayPeer[%d]: mode must be %q or %q", r.Name, i, RelayPeerIgnore, RelayPeerDedupe)
+			}
+			key := strings.ToLower(p.PubKey)
+			if seenPeer[key] {
+				return fmt.Errorf("repeater %q: relay peer %s… is listed twice", r.Name, key[:8])
+			}
+			seenPeer[key] = true
 		}
 		if v := r.AdvertInterval; v != nil && *v != 0 && (*v < MinAdvertIntervalSecs || *v > MaxAdvertIntervalSecs) {
 			return fmt.Errorf("repeater %q: advertInterval must be 0 (off) or %d-%d seconds (%d-%d minutes)",

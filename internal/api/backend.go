@@ -699,6 +699,9 @@ type RepeaterRelayInput struct {
 	MultiAcks           *int     `json:"multiAcks"`
 	AdvertInterval      *int     `json:"advertInterval"`
 	FloodAdvertInterval *int     `json:"floodAdvertInterval"`
+	// RelayPeers replaces the whole list; nil clears it.
+	RelayPeers []store.RepeaterRelayPeer `json:"relayPeers"`
+	DedupeHold *float64                  `json:"dedupeHold"`
 }
 
 // RepeaterAdminInput is the Owner & access section; passwords are nil=keep, ""=clear.
